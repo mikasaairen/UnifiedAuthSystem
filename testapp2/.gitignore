@@ -1,0 +1,20 @@
+# 虚拟环境
+venv/
+
+# 环境变量文件
+.env
+
+# 日志文件
+*.log
+
+# 缓存文件
+__pycache__/
+*.pyc
+
+# IDE 配置文件
+.idea/
+.vscode/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db

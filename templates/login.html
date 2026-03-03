@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统一认证系统 - 登录</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>统一认证系统</h1>
+        
+        <!-- 登录表单 -->
+        <div id="loginSection">
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit">登录</button>
+                <div id="error" class="error"></div>
+            </form>
+            <p style="text-align: center; margin-top: 20px;">
+                还没有账号？<a href="#" onclick="showRegister()">立即注册</a>
+            </p>
+        </div>
+        
+        <!-- 注册表单 -->
+        <div id="registerSection" style="display: none;">
+            <form id="registerForm">
+                <div class="form-group">
+                    <label for="reg_username">用户名</label>
+                    <input type="text" id="reg_username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg_email">邮箱</label>
+                    <input type="email" id="reg_email" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg_full_name">姓名</label>
+                    <input type="text" id="reg_full_name" name="full_name">
+                </div>
+                <div class="form-group">
+                    <label for="reg_password">密码</label>
+                    <input type="password" id="reg_password" name="password" required>
+                </div>
+                <button type="submit">注册</button>
+                <div id="reg_error" class="error"></div>
+                <div id="reg_success" class="success"></div>
+            </form>
+            <p style="text-align: center; margin-top: 20px;">
+                已有账号？<a href="#" onclick="showLogin()">立即登录</a>
+            </p>
+        </div>
+    </div>
+    
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/auth.js"></script>
+    <script>
+        function showRegister() {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('registerSection').style.display = 'block';
+        }
+        
+        function showLogin() {
+            document.getElementById('registerSection').style.display = 'none';
+            document.getElementById('loginSection').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+

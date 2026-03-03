@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统一认证系统 - 管理控制台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- 右上角：用户信息 + 登出（固定位置） -->
+    <div class="dashboard-topbar">
+        <span class="topbar-user" id="userInfoTopbar">加载中...</span>
+        <button type="button" id="logoutBtn" class="btn btn-secondary btn-sm logout-btn-topbar">登出</button>
+    </div>
+
+    <div class="dashboard-container">
+        <!-- 侧边栏导航 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>统一认证系统</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-page="overview">
+                    <span>📊</span> 概览
+                </a>
+                <a href="#" class="nav-item" data-page="users">
+                    <span>👥</span> 用户管理
+                </a>
+                <a href="#" class="nav-item" data-page="roles">
+                    <span>🔐</span> 角色权限
+                </a>
+                <a href="#" class="nav-item" data-page="apps">
+                    <span>📱</span> 应用管理
+                </a>
+                <a href="#" class="nav-item" data-page="logs">
+                    <span>📋</span> 审计日志
+                </a>
+            </nav>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <header class="content-header">
+                <h1 id="pageTitle">概览</h1>
+            </header>
+
+            <!-- 概览页面 -->
+            <div id="overviewPage" class="page-content active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>用户总数</h3>
+                        <p class="stat-number" id="totalUsers">-</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>应用总数</h3>
+                        <p class="stat-number" id="totalApps">-</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>角色总数</h3>
+                        <p class="stat-number" id="totalRoles">-</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>今日日志</h3>
+                        <p class="stat-number" id="todayLogs">-</p>
+                    </div>
+                </div>
+                <div class="welcome-section">
+                    <h2>欢迎使用统一认证系统</h2>
+                    <p>系统提供以下核心功能：</p>
+                    <ul>
+                        <li>统一身份认证服务</li>
+                        <li>基于角色的访问控制（RBAC）</li>
+                        <li>多应用接入管理</li>
+                        <li>安全审计与日志记录</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 用户管理页面 -->
+            <div id="usersPage" class="page-content">
+                <div class="page-header">
+                    <button class="btn btn-primary" onclick="showCreateUserModal()">+ 新建用户</button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteUsers()">批量删除</button>
+                    <select id="userRoleFilter" onchange="loadUsers()">
+                        <option value="">全部</option>
+                        <option value="true">管理员</option>
+                        <option value="false">普通用户</option>
+                    </select>
+                    <div class="search-box user-search-bar">
+                        <input type="text" id="userSearch" placeholder="输入用户名或邮箱进行搜索">
+                        <button type="button" class="btn btn-primary" onclick="searchUsers()">搜索</button>
+                        <span id="userSearchFeedback" class="search-feedback"></span>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="usersSelectAll" onchange="toggleUsersSelectAll(this)" title="全选"></th>
+                                <th>ID</th>
+                                <th>用户名</th>
+                                <th>邮箱</th>
+                                <th>姓名</th>
+                                <th>状态</th>
+                                <th>角色</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr><td colspan="8">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 角色权限管理页面 -->
+            <div id="rolesPage" class="page-content">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="roles" onclick="switchTab('roles')">角色管理</button>
+                    <button class="tab-btn" data-tab="permissions" onclick="switchTab('permissions')">权限管理</button>
+                    <button class="tab-btn" data-tab="resources" onclick="switchTab('resources')">资源管理</button>
+                </div>
+                
+                <!-- 角色管理 -->
+                <div id="rolesTab" class="tab-content active">
+                    <div class="page-header">
+                        <button class="btn btn-primary" onclick="showCreateRoleModal()">+ 新建角色</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteRoles()">批量删除</button>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="rolesSelectAll" onchange="toggleRolesSelectAll(this)" title="全选"></th>
+                                    <th>ID</th>
+                                    <th>角色名称</th>
+                                    <th>描述</th>
+                                    <th>权限数量</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rolesTableBody">
+                                <tr><td colspan="6">加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 权限管理 -->
+                <div id="permissionsTab" class="tab-content">
+                    <div class="page-header">
+                        <button class="btn btn-primary" onclick="showCreatePermissionModal()">+ 新建权限</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeletePermissions()">批量删除</button>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="permissionsSelectAll" onchange="togglePermissionsSelectAll(this)" title="全选"></th>
+                                    <th>ID</th>
+                                    <th>权限代码</th>
+                                    <th>权限名称</th>
+                                    <th>资源ID</th>
+                                    <th>描述</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="permissionsTableBody">
+                                <tr><td colspan="7">加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 资源管理 -->
+                <div id="resourcesTab" class="tab-content">
+                    <div class="page-header">
+                        <button class="btn btn-primary" onclick="showCreateResourceModal()">+ 新建资源</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteResources()">批量删除</button>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="resourcesSelectAll" onchange="toggleResourcesSelectAll(this)" title="全选"></th>
+                                    <th>ID</th>
+                                    <th>资源名称</th>
+                                    <th>资源类型</th>
+                                    <th>路径</th>
+                                    <th>方法</th>
+                                    <th>应用ID</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resourcesTableBody">
+                                <tr><td colspan="8">加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 应用管理页面 -->
+            <div id="appsPage" class="page-content">
+                <div class="page-header">
+                    <button class="btn btn-primary" onclick="showCreateAppModal()">+ 注册应用</button>
+                    <button class="btn btn-primary" onclick="showBatchRegisterModal()">批量注册应用</button>
+                    <select id="appStatusFilter" onchange="loadApps()">
+                        <option value="">全部状态</option>
+                        <option value="pending">待审核</option>
+                        <option value="active">已启用</option>
+                        <option value="disabled">已禁用</option>
+                    </select>
+                    <span class="batch-actions" style="margin-left: 12px;">
+                        <button type="button" class="btn btn-success btn-sm" onclick="batchApproveApps()">批量审核通过</button>
+                        <button type="button" class="btn btn-warning btn-sm" onclick="batchDisableApps()">批量禁用</button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteApps()">批量删除</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="exportSelectedApps()">导出选中</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="showBatchCallbacksModal()">批量更新回调</button>
+                    </span>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="appsSelectAll" onchange="toggleAppsSelectAll(this)" title="全选"></th>
+                                <th>ID</th>
+                                <th>应用ID</th>
+                                <th>应用名称</th>
+                                <th>描述</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="appsTableBody">
+                            <tr><td colspan="7">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 审计日志页面 -->
+            <div id="logsPage" class="page-content">
+                <div class="page-header">
+                    <div class="filter-group logs-filter">
+                        <label>开始时间</label>
+                        <input type="datetime-local" id="logStartTime" placeholder="开始时间">
+                        <label>结束时间</label>
+                        <input type="datetime-local" id="logEndTime" placeholder="结束时间">
+                        <label>操作类型</label>
+                        <select id="logActionFilter">
+                            <option value="">全部操作</option>
+                            <option value="login">登录</option>
+                            <option value="logout">登出</option>
+                            <option value="refresh">刷新令牌</option>
+                            <option value="user_register">用户注册</option>
+                            <option value="user_update">用户更新</option>
+                            <option value="user_disable">用户禁用</option>
+                            <option value="user_enable">用户启用</option>
+                            <option value="user_delete">用户删除</option>
+                            <option value="app_register">应用注册</option>
+                            <option value="app_delete">应用删除</option>
+                            <option value="app_approve">应用审核</option>
+                            <option value="app_disable">应用禁用</option>
+                            <option value="app_enable">应用启用</option>
+                            <option value="check_permission">权限检查</option>
+                            <option value="introspect">令牌内省</option>
+                        </select>
+                        <label>结果</label>
+                        <select id="logSuccessFilter">
+                            <option value="">全部</option>
+                            <option value="true">成功</option>
+                            <option value="false">失败</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="loadLogs()">查询</button>
+                        <button class="btn btn-secondary" onclick="exportLogs()">导出 CSV</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table logs-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>操作人ID</th>
+                                <th>操作类型</th>
+                                <th>操作类型说明</th>
+                                <th>资源/目标</th>
+                                <th>IP</th>
+                                <th>结果</th>
+                                <th>详情</th>
+                                <th>时间</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsTableBody">
+                            <tr><td colspan="9">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 模态框容器 -->
+    <div id="modalContainer"></div>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>
