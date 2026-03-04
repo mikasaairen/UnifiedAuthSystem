@@ -8,11 +8,14 @@ import hashlib
 import os
 import secrets
 import urllib.parse
+from typing import Optional
+
 from flask import Flask, redirect, request, session
 import requests
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "testapp2-dev-secret-change-in-prod")
+app.config["SESSION_COOKIE_NAME"] = "testapp2_session"
 
 # 从环境变量读取，未设置则使用下方默认值（与 .env.example 一致）
 AUTH_CENTER_URL = os.environ.get("AUTH_CENTER_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -23,9 +26,10 @@ CALLBACK_URL = os.environ.get("CALLBACK_URL", "http://localhost:5001/oauth/callb
 API_V1 = f"{AUTH_CENTER_URL}/api/v1"
 
 
-def get_authorize_url(state: str) -> str:
+def get_authorize_url(state: str, api_base: Optional[str] = None) -> str:
+    base = (api_base or API_V1).rstrip("/")
     return (
-        f"{API_V1}/auth/authorize?"
+        f"{base}/auth/authorize?"
         + urllib.parse.urlencode({
             "client_id": APP_ID,
             "redirect_uri": CALLBACK_URL,
@@ -57,11 +61,30 @@ def verify_signed_state(state: str) -> bool:
         return False
 
 
+def _safe_auth_origin(origin: Optional[str]) -> Optional[str]:
+    """仅允许与认证中心同源的 origin，用于 SSO 时携带控制台 Cookie。"""
+    if not origin or not isinstance(origin, str):
+        return None
+    o = origin.strip().rstrip("/").lower()
+    if not o.startswith("http://") and not o.startswith("https://"):
+        return None
+    if "localhost" in o or "127.0.0.1" in o:
+        return o
+    return None
+
+
 @app.route("/")
 def index():
-    if not session.get("access_token"):
+    auth_origin = request.args.get("auth_origin")
+    from_workbench = auth_origin and _safe_auth_origin(auth_origin)
+    if not session.get("access_token") or from_workbench:
+        if from_workbench:
+            session.clear()
         state = make_signed_state()
-        return redirect(get_authorize_url(state))
+        api_base = None
+        if from_workbench:
+            api_base = auth_origin.rstrip("/") + "/api/v1"
+        return redirect(get_authorize_url(state, api_base))
     # 已登录：可调用认证中心 /users/me 展示用户信息
     try:
         r = requests.get(

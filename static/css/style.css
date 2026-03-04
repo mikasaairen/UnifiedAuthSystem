@@ -189,3 +189,57 @@ button[type="submit"]:hover, .btn-primary:hover { background: #66b1ff; }
 .message-success { background: #67c23a; color: #fff; }
 .message-error { background: #f56c6c; color: #fff; }
 .message-info { background: #409eff; color: #fff; }
+
+/* 工作台 */
+.workbench-category {
+    font-size: 15px;
+    color: #303133;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #ebeef5;
+}
+.workbench-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 20px;
+}
+.workbench-loading {
+    color: #909399;
+    margin: 0;
+}
+.workbench-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    padding: 24px 16px;
+    text-decoration: none;
+    color: #303133;
+    transition: background 0.2s, box-shadow 0.2s;
+    min-height: 120px;
+}
+.workbench-card:hover {
+    background: #f5f7fa;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+}
+.workbench-card-icon {
+    width: 48px;
+    height: 48px;
+    background: #ecf5ff;
+    color: #409eff;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-bottom: 12px;
+}
+.workbench-card-name {
+    font-size: 14px;
+    text-align: center;
+    line-height: 1.4;
+    word-break: break-all;
+}

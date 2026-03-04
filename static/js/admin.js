@@ -58,6 +58,7 @@ function switchPage(pageName) {
     if (activeNav) activeNav.classList.add('active');
 
     const titles = {
+        'workbench': '工作台',
         'overview': '概览',
         'users': '用户管理',
         'roles': '角色权限管理',
@@ -72,6 +73,9 @@ function switchPage(pageName) {
     if (pageEl) pageEl.classList.add('active');
 
     switch(pageName) {
+        case 'workbench':
+            loadWorkbench();
+            break;
         case 'overview':
             loadOverview();
             break;
@@ -88,6 +92,42 @@ function switchPage(pageName) {
             loadLogs();
             break;
     }
+}
+
+async function loadWorkbench() {
+    const gridEl = document.getElementById('workbenchGrid');
+    if (!gridEl) return;
+    try {
+        gridEl.innerHTML = '<p class="workbench-loading">加载中...</p>';
+        const res = await API.get('/apps/workbench');
+        const apps = (res && res.apps) ? res.apps : [];
+        const withCallback = apps.filter(function(a) { return a.callback_url && a.callback_url.trim(); });
+        if (withCallback.length === 0) {
+            gridEl.innerHTML = '<p class="workbench-loading">暂无已接入应用，或您暂无访问权限。</p>';
+            return;
+        }
+        var authOrigin = window.location.origin;
+        gridEl.innerHTML = withCallback.map(function(app) {
+            var cb = app.callback_url.trim();
+            var entryUrl = cb.replace(/\/oauth\/callback\/?$/i, '/') || (cb.split('/').slice(0, -1).join('/') + '/');
+            var sep = entryUrl.indexOf('?') >= 0 ? '&' : '?';
+            var href = entryUrl + sep + 'auth_origin=' + encodeURIComponent(authOrigin);
+            var name = app.app_name || app.app_id || '应用';
+            var iconText = name.charAt(0).toUpperCase();
+            return '<a class="workbench-card" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer" title="' + (app.description || name) + '">' +
+                '<div class="workbench-card-icon">' + iconText + '</div>' +
+                '<span class="workbench-card-name">' + escapeHtml(name) + '</span></a>';
+        }).join('');
+    } catch (e) {
+        console.error('加载工作台失败:', e);
+        gridEl.innerHTML = '<p class="workbench-loading">加载失败，请稍后重试。</p>';
+    }
+}
+
+function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
 }
 
 async function loadOverview() {

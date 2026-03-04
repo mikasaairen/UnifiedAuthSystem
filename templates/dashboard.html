@@ -20,6 +20,9 @@
                 <h2>统一认证系统</h2>
             </div>
             <nav class="sidebar-nav">
+                <a href="#" class="nav-item" data-page="workbench">
+                    <span>🏠</span> 工作台
+                </a>
                 <a href="#" class="nav-item active" data-page="overview">
                     <span>📊</span> 概览
                 </a>
@@ -43,6 +46,14 @@
             <header class="content-header">
                 <h1 id="pageTitle">概览</h1>
             </header>
+
+            <!-- 工作台页面 -->
+            <div id="workbenchPage" class="page-content">
+                <div class="workbench-category">已接入应用</div>
+                <div id="workbenchGrid" class="workbench-grid">
+                    <p class="workbench-loading">加载中...</p>
+                </div>
+            </div>
 
             <!-- 概览页面 -->
             <div id="overviewPage" class="page-content active">
@@ -305,6 +316,6 @@
 
     <script src="/static/js/api.js"></script>
     <script src="/static/js/auth.js"></script>
-    <script src="/static/js/admin.js"></script>
+    <script src="/static/js/admin.js?v=workbench"></script>
 </body>
 </html>

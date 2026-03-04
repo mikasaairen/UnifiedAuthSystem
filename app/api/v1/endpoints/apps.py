@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_active_user, get_current_admin_user, get_db
 from app.core.cors import invalidate_cors_cache
 from app.crud import crud_app, crud_audit
+from app.models.application import Application
 from app.models.user import User
 from app.schemas.application import (
     ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationRegisterResponse,
@@ -163,6 +164,50 @@ async def list_applications(
     if status_filter:
         apps = [app for app in apps if app.status == status_filter]
     return apps
+
+
+@router.get("/list")
+async def list_user_apps(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取当前用户可访问的应用列表（基于 RBAC，含 callback_url）
+    """
+    apps = crud_app.get_user_apps(db, user_id=current_user.id)
+    return {
+        "apps": [
+            {
+                "app_id": app.app_id,
+                "app_name": app.app_name,
+                "description": app.description,
+                "callback_url": app.callback_url or "",
+            }
+            for app in apps
+        ]
+    }
+
+
+@router.get("/workbench")
+async def list_workbench_apps(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    工作台：返回所有已启用（已接入）的应用，管理员与普通用户均可访问；审核通过后自动出现在工作台。
+    """
+    apps = db.query(Application).filter(Application.status == "active").all()
+    return {
+        "apps": [
+            {
+                "app_id": app.app_id,
+                "app_name": app.app_name,
+                "description": app.description,
+                "callback_url": app.callback_url or "",
+            }
+            for app in apps
+        ]
+    }
 
 
 @router.post("/{app_id}/approve", response_model=ApplicationResponse)
@@ -564,26 +609,5 @@ async def check_permission(
         "has_permission": has_permission,
         "user_id": current_user.id,
         "username": current_user.username
-    }
-
-
-@router.get("/list")
-async def list_user_apps(
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    获取当前用户可访问的应用列表
-    """
-    apps = crud_app.get_user_apps(db, user_id=current_user.id)
-    return {
-        "apps": [
-            {
-                "app_id": app.app_id,
-                "app_name": app.app_name,
-                "description": app.description
-            }
-            for app in apps
-        ]
     }
 
