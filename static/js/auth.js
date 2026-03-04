@@ -17,23 +17,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const registerForm = document.getElementById('registerForm');
     const oauth = getOAuthParams();
 
-    // 已登录且为 OAuth 流程：直接拿授权码并重定向回应用，无需再输密码
-    if (oauth.client_id && oauth.redirect_uri) {
-        const token = localStorage.getItem('access_token');
-        if (token) {
-            const q = new URLSearchParams({
-                client_id: oauth.client_id,
-                redirect_uri: oauth.redirect_uri,
-                state: oauth.state
-            });
-            API.get('/auth/create-authorization-code?' + q.toString())
-                .then(function(res) {
-                    if (res.redirect_url) window.location.href = res.redirect_url;
-                })
-                .catch(function() { /* 未授权或过期，继续显示登录页 */ });
-        }
-    }
-
     // 登录表单处理
     if (loginForm) {
         loginForm.addEventListener('submit', async function(e) {
@@ -56,6 +39,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 const response = await API.postForm('/auth/login', formData);
 
                 if (response.redirect_url) {
+                    // 单点登录：同时保存 token，便于之后访问管理端免登
+                    if (response.access_token) {
+                        localStorage.setItem('access_token', response.access_token);
+                        if (response.refresh_token) localStorage.setItem('refresh_token', response.refresh_token);
+                    }
                     window.location.href = response.redirect_url;
                     return;
                 }
@@ -101,12 +89,17 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // 登出处理
+    // 登出处理：先请求服务端清除 SSO Cookie，再清本地 token 并跳转（需等请求完成再跳转，否则 Cookie 可能未清除）
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
         logoutBtn.addEventListener('click', function() {
-            localStorage.removeItem('access_token');
-            window.location.href = '/login';
+            fetch('/api/v1/auth/clear-sso', { method: 'GET', credentials: 'include' })
+                .catch(function() {})
+                .finally(function() {
+                    localStorage.removeItem('access_token');
+                    localStorage.removeItem('refresh_token');
+                    window.location.href = '/login';
+                });
         });
     }
 

@@ -5,10 +5,11 @@ from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, Form
 from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.api.deps import SSO_COOKIE_NAME
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -18,7 +19,7 @@ from app.core.security import (
     verify_password
 )
 from app.core.auth_code_store import generate_authorization_code
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_current_user_from_cookie_or_bearer, get_db
 from app.crud import crud_user, crud_session, crud_audit, crud_app
 from app.models.session import Session as SessionModel
 from app.schemas.token import Token
@@ -37,9 +38,7 @@ async def login(
     db: Session = Depends(get_db),
 ):
     """
-    OAuth2 兼容的登录接口。
-    - 若请求带 client_id、redirect_uri（OAuth 授权码流程），则校验通过后生成授权码并返回 redirect_url，不返回 token。
-    - 否则返回 access_token + refresh_token，供控制台使用。
+    OAuth2 兼容的登录接口。带 client_id、redirect_uri 时生成授权码并返回 redirect_url 与 token；否则仅返回 access_token、refresh_token。
     """
     try:
         user = crud_user.authenticate(
@@ -108,7 +107,20 @@ async def login(
             details='{}',
         )
 
-        # OAuth2 授权码流程：带 client_id + redirect_uri 时，生成 code 并返回重定向 URL
+        # 单点登录：登录成功后统一设置 SSO Cookie，任意应用/管理端一次登录即可互通
+        def _make_login_response(body: dict):
+            resp = JSONResponse(content=body)
+            resp.set_cookie(
+                key=SSO_COOKIE_NAME,
+                value=access_token,
+                max_age=expires_in,
+                path="/",
+                httponly=True,
+                samesite="lax",
+            )
+            return resp
+
+        # OAuth2 授权码流程：带 client_id + redirect_uri 时，生成 code，同时返回 redirect_url 与 token（前端存 token 后跳转，便于后续访问管理端免登）
         if client_id and redirect_uri:
             app = crud_app.get_by_app_id(db, app_id=client_id)
             if app and app.status == "active":
@@ -121,14 +133,20 @@ async def login(
                 )
                 sep = "&" if "?" in redirect_uri else "?"
                 redirect_url = f"{redirect_uri}{sep}code={code}&state={state or ''}"
-                return {"redirect_url": redirect_url}
+                return _make_login_response({
+                    "redirect_url": redirect_url,
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "token_type": "bearer",
+                    "expires_in": expires_in,
+                })
 
-        return Token(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=expires_in,
-        )
+        return _make_login_response({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": expires_in,
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -197,11 +215,42 @@ async def logout(
     current_user: User = Depends(get_current_user)
 ):
     """
-    登出接口（简化版）：客户端删除 token 即可。
-    说明：严格的“服务端撤销”需要客户端同时传 refresh_token 或 jti，
-    我们在后续会在管理台/前端把 refresh_token 也接入，从而做到真正的会话撤销。
+    登出接口：清除服务端 SSO Cookie，便于单点登出后访问其他应用需重新登录。
     """
-    return {"message": "登出成功"}
+    resp = JSONResponse(content={"message": "登出成功"})
+    resp.delete_cookie(key=SSO_COOKIE_NAME, path="/", httponly=True, samesite="lax")
+    return resp
+
+
+def _is_safe_redirect_url(url: str) -> bool:
+    """仅允许相对路径或本机地址，防止开放重定向。"""
+    if not url or not isinstance(url, str):
+        return False
+    s = url.strip()
+    if s.startswith("/") and not s.startswith("//"):
+        return True
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(s)
+        if not p.netloc:
+            return True
+        host = (p.netloc or "").split(":")[0].lower()
+        return host in ("localhost", "127.0.0.1")
+    except Exception:
+        return False
+
+
+@router.get("/clear-sso")
+async def clear_sso_cookie(next_url: Optional[str] = Query(None, alias="next")):
+    """
+    清除 SSO Cookie（无需认证）。支持 next 参数：清除后重定向到该 URL（仅允许相对路径或 localhost/127.0.0.1），供外部应用单点登出后跳回。
+    """
+    if next_url and _is_safe_redirect_url(next_url):
+        resp = RedirectResponse(url=next_url, status_code=302)
+    else:
+        resp = JSONResponse(content={"message": "已清除单点登录状态"})
+    resp.delete_cookie(key=SSO_COOKIE_NAME, path="/", httponly=True, samesite="lax")
+    return resp
 
 
 @router.get("/authorize")
@@ -211,10 +260,11 @@ async def authorize(
     response_type: str = "code",
     scope: str = "",
     state: str = "",
-    db: Session = Depends(get_db)
+    current_user: Optional[User] = Depends(get_current_user_from_cookie_or_bearer),
+    db: Session = Depends(get_db),
 ):
     """
-    授权码模式的授权端点。未登录时重定向到登录页并带上参数；已登录且带 Cookie/Token 时由前端调用 create_authorization_code 获取 code 并跳转。
+    授权码模式的授权端点。单点登录：若已携带有效 SSO Cookie 或 Bearer，直接发码并重定向回应用，否则重定向到登录页。
     """
     app = crud_app.get_by_app_id(db, app_id=client_id)
     if not app:
@@ -227,6 +277,18 @@ async def authorize(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="不支持的响应类型"
         )
+    # 已登录（Cookie 或 Bearer）：直接生成授权码并重定向，无需再进登录页
+    if current_user:
+        code = generate_authorization_code(
+            user_id=current_user.id,
+            username=current_user.username,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            state=state,
+        )
+        sep = "&" if "?" in redirect_uri else "?"
+        redirect_url = f"{redirect_uri}{sep}code={code}&state={state}"
+        return RedirectResponse(url=redirect_url, status_code=302)
     return RedirectResponse(
         url=f"/login?client_id={client_id}&redirect_uri={redirect_uri}&response_type={response_type}&scope={scope}&state={state}"
     )

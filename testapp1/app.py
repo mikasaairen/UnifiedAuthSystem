@@ -2,10 +2,13 @@
 测试应用 test1 - 统一认证系统外部接入示例
 运行在 5000 端口，使用独立虚拟环境。
 """
+import base64
+import hmac
+import hashlib
 import os
 import secrets
 import urllib.parse
-from flask import Flask, redirect, request, session, jsonify
+from flask import Flask, redirect, request, session
 import requests
 
 app = Flask(__name__)
@@ -32,11 +35,32 @@ def get_authorize_url(state: str) -> str:
     )
 
 
+# 使用带签名的 state，不依赖 Cookie，避免跨站/localhost 与 127.0.0.1 混用导致 state 一直刷新或不匹配
+def make_signed_state() -> str:
+    raw = secrets.token_urlsafe(16)
+    sig = hmac.new(APP_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{raw}.{sig}".encode()).decode().rstrip("=")
+
+
+def verify_signed_state(state: str) -> bool:
+    if not state:
+        return False
+    try:
+        pad = 4 - len(state) % 4
+        if pad != 4:
+            state += "=" * pad
+        decoded = base64.urlsafe_b64decode(state.encode()).decode()
+        raw, sig = decoded.rsplit(".", 1)
+        expected = hmac.new(APP_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected)
+    except Exception:
+        return False
+
+
 @app.route("/")
 def index():
     if not session.get("access_token"):
-        state = secrets.token_urlsafe(16)
-        session["oauth_state"] = state
+        state = make_signed_state()
         return redirect(get_authorize_url(state))
     # 已登录：可调用认证中心 /users/me 展示用户信息
     try:
@@ -53,6 +77,9 @@ def index():
                 f"<p>用户名: {user.get('username', '-')} | 邮箱: {user.get('email', '-')}</p>"
                 '<p><a href="/logout">退出登录</a></p>'
             )
+        if r.status_code == 401:
+            session.clear()
+            return redirect("/logout")
     except Exception as e:
         return f"<h1>测试应用 test1</h1><p>已登录（获取用户信息失败: {e}）</p><p><a href='/logout'>退出登录</a></p>"
     return (
@@ -68,9 +95,8 @@ def oauth_callback():
     state = request.args.get("state")
     if not code:
         return "缺少 code 参数", 400
-    if state != session.get("oauth_state"):
-        return "state 不匹配，请重试", 400
-    session.pop("oauth_state", None)
+    if not verify_signed_state(state or ""):
+        return "state 不匹配或已失效，请重新登录", 400
 
     # 用 code 换 token
     r = requests.post(
@@ -96,8 +122,12 @@ def oauth_callback():
 @app.route("/logout")
 def logout():
     session.clear()
-    # 可选：跳回认证中心登录页或本应用首页
-    return redirect("/")
+    # 单点登出：先到认证中心清除 SSO Cookie，再跳回本应用首页（否则会因仍有 Cookie 被立即重新登录）
+    from urllib.parse import urlparse, urlencode
+    base = urlparse(CALLBACK_URL)
+    app_base = f"{base.scheme}://{base.netloc}/"
+    clear_sso_url = f"{AUTH_CENTER_URL}/api/v1/auth/clear-sso?{urlencode({'next': app_base})}"
+    return redirect(clear_sso_url)
 
 
 if __name__ == "__main__":

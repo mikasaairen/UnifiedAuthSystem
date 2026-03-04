@@ -180,7 +180,13 @@ def verify_token(token: str) -> dict:
     验证JWT令牌（只做签名与 exp 校验，不做业务校验）
     """
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        # 不校验 aud，以便 OAuth 换取的带 aud 的 token 也能用于 /users/me 等接口
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+            options={"verify_aud": False},
+        )
         return payload
     except jwt.JWTError:
         raise ValueError("无效的令牌")

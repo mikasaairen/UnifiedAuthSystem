@@ -1,11 +1,11 @@
 """
 核心依赖：数据库Session获取、当前用户提取
 """
-from typing import Generator
-from fastapi import Depends, HTTPException, status
+from typing import Generator, Optional
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from jose import JWTError, jwt
+from jose import JWTError
 
 from app.core.config import settings
 from app.core.security import verify_token
@@ -14,6 +14,9 @@ from app.crud import crud_user
 from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+
+# SSO Cookie 名，与 auth 端点中设置的一致
+SSO_COOKIE_NAME = "sso_token"
 
 
 def get_db() -> Generator:
@@ -25,6 +28,34 @@ def get_db() -> Generator:
         yield db
     finally:
         db.close()
+
+
+async def get_current_user_from_cookie_or_bearer(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    单点登录：优先从 Cookie 读取 sso_token，否则从 Authorization Bearer 读取。
+    用于 /authorize 等需要“已登录则直接放行”的场景；失败时返回 None 而非 401。
+    """
+    token: Optional[str] = request.cookies.get(SSO_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+    if not token:
+        return None
+    try:
+        payload = verify_token(token)
+        username: str = payload.get("sub")
+        if not username:
+            return None
+        user = crud_user.get_by_username(db, username=username)
+        if user is None or not user.is_active:
+            return None
+        return user
+    except (JWTError, ValueError):
+        return None
 
 
 async def get_current_user(
@@ -45,7 +76,8 @@ async def get_current_user(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-    except JWTError:
+    except (JWTError, ValueError):
+        # ValueError: verify_token 在令牌无效/过期时抛出
         raise credentials_exception
     
     user = crud_user.get_by_username(db, username=username)

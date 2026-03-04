@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.so
+.venv/
+venv/
+env/
+
+# 环境与配置
+.env
+.env.local
+*.local
+
+# IDE
+.idea/
+*.iml
+
+# 日志与临时
+*.log
+*.tmp
