@@ -28,9 +28,9 @@ class AppAuthMiddleware(BaseHTTPMiddleware):
         needs_app_auth = any(request.url.path.startswith(path) for path in protected_paths)
         
         if needs_app_auth:
-            # 从 Header 或 Query 参数获取 app_id 和 app_secret
+            # app_id 可从 Header 或 Query 获取；app_secret 仅允许 Header 传递，避免 URL 泄露
             app_id = request.headers.get("X-App-Id") or request.query_params.get("app_id")
-            app_secret = request.headers.get("X-App-Secret") or request.query_params.get("app_secret")
+            app_secret = request.headers.get("X-App-Secret")
             
             if not app_id or not app_secret:
                 return Response(

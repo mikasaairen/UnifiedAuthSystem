@@ -28,6 +28,13 @@ from app.models.user import User
 router = APIRouter()
 
 
+def _redirect_uri_matches_app(redirect_uri: str, app_callback_url: Optional[str]) -> bool:
+    """校验 redirect_uri 与应用注册的 callback_url 一致，防止授权码劫持。"""
+    if not app_callback_url or not app_callback_url.strip():
+        return False
+    return redirect_uri.strip() == app_callback_url.strip()
+
+
 @router.post("/login")
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -120,10 +127,17 @@ async def login(
             )
             return resp
 
-        # OAuth2 授权码流程：带 client_id + redirect_uri 时，生成 code，同时返回 redirect_url 与 token（前端存 token 后跳转，便于后续访问管理端免登）
+        # OAuth2 授权码流程：带 client_id + redirect_uri 时，生成 code（redirect_uri 必须与应用 callback_url 一致）
         if client_id and redirect_uri:
             app = crud_app.get_by_app_id(db, app_id=client_id)
-            if app and app.status == "active":
+            if not app or app.status != "active":
+                pass  # 非 OAuth 流程，直接返回 token
+            elif not _redirect_uri_matches_app(redirect_uri, app.callback_url):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="redirect_uri 与应用注册的回调地址不一致"
+                )
+            else:
                 code = generate_authorization_code(
                     user_id=user.id,
                     username=user.username,
@@ -212,11 +226,28 @@ async def refresh_token(
 
 @router.post("/logout")
 async def logout(
-    current_user: User = Depends(get_current_user)
+    request: Request,
+    db: Session = Depends(get_db),
 ):
     """
-    登出接口：清除服务端 SSO Cookie，便于单点登出后访问其他应用需重新登录。
+    登出接口：撤销服务端会话（refresh token 失效），并清除 SSO Cookie。
     """
+    # 优先从 Bearer 或 Cookie 获取 token，以便撤销对应会话
+    token: Optional[str] = request.cookies.get(SSO_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+    if token:
+        try:
+            payload = verify_token(token)
+            jti = payload.get("jti")
+            if jti:
+                sess = crud_session.crud_session.get_by_jti(db, jti=jti)
+                if sess and crud_session.crud_session.is_active(sess):
+                    crud_session.crud_session.revoke(db, db_obj=sess)
+        except (ValueError, Exception):
+            pass
     resp = JSONResponse(content={"message": "登出成功"})
     resp.delete_cookie(key=SSO_COOKIE_NAME, path="/", httponly=True, samesite="lax")
     return resp
@@ -277,6 +308,11 @@ async def authorize(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="不支持的响应类型"
         )
+    if not _redirect_uri_matches_app(redirect_uri, app.callback_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="redirect_uri 与应用注册的回调地址不一致"
+        )
     # 已登录（Cookie 或 Bearer）：直接生成授权码并重定向，无需再进登录页
     if current_user:
         code = generate_authorization_code(
@@ -308,6 +344,11 @@ async def create_authorization_code_for_logged_in_user(
     app = crud_app.get_by_app_id(db, app_id=client_id)
     if not app or app.status != "active":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效或未激活的应用")
+    if not _redirect_uri_matches_app(redirect_uri, app.callback_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="redirect_uri 与应用注册的回调地址不一致"
+        )
     code = generate_authorization_code(
         user_id=current_user.id,
         username=current_user.username,
@@ -393,11 +434,18 @@ async def token(
 @router.post("/introspect")
 async def introspect(
     token: str = Form(...),
-    db: Session = Depends(get_db)
+    client_id: str = Form(..., description="应用ID，需配合 client_secret 完成应用身份校验"),
+    client_secret: str = Form(..., description="应用密钥"),
+    db: Session = Depends(get_db),
 ):
     """
-    令牌内省端点，用于验证令牌有效性。返回 iss/aud 以支持应用间信任校验。
+    令牌内省端点，用于验证令牌有效性。需提供有效的 client_id 和 client_secret 进行应用身份校验。
     """
+    app = crud_app.get_by_app_id(db, app_id=client_id)
+    if not app or app.status != "active":
+        raise HTTPException(status_code=401, detail="无效的客户端ID或应用未激活")
+    if not verify_password(client_secret, app.app_secret_hash):
+        raise HTTPException(status_code=401, detail="无效的客户端密钥")
     try:
         payload = verify_token(token)
         return {
