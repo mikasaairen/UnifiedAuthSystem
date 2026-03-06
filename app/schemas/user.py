@@ -21,21 +21,24 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     """
-    用户创建模型
+    用户创建模型（权限仅通过角色分配，不再使用 is_admin）
     """
     password: str
-    is_admin: bool = False
+
+
+class UserCreateByAdmin(UserCreate):
+    """管理员创建用户（可同时分配角色）"""
+    role_ids: Optional[List[int]] = None
 
 
 class UserUpdate(BaseModel):
     """
-    用户更新模型
+    用户更新模型（权限仅通过角色分配）
     """
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
-    is_admin: Optional[bool] = None
 
     @field_validator("email", mode="before")
     @classmethod
@@ -45,14 +48,24 @@ class UserUpdate(BaseModel):
         return v
 
 
+class UserRoleInfo(BaseModel):
+    """用户关联角色的简要信息"""
+    id: int
+    name: str
+    description: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class UserResponse(UserBase):
     """
-    用户响应模型
+    用户响应模型（仅通过 roles 表示权限，不再返回 is_admin）
     """
     id: int
     is_active: bool
-    is_admin: bool
-    
+    roles: List[UserRoleInfo] = []
+
     class Config:
         from_attributes = True
 

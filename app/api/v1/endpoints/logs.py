@@ -10,7 +10,7 @@ import csv
 import io
 import re
 
-from app.api.deps import get_current_admin_user, get_db
+from app.api.deps import get_db, require_permission
 from app.crud import crud_audit
 from app.models.user import User
 from app.schemas.audit import AuditLogResponse
@@ -71,7 +71,7 @@ async def get_audit_logs(
     success: Optional[bool] = Query(None, description="按结果筛选：true 成功 / false 失败"),
     start_time: Optional[str] = Query(None, description="开始时间 YYYY-MM-DD 或 YYYY-MM-DDTHH:mm"),
     end_time: Optional[str] = Query(None, description="结束时间 YYYY-MM-DD 或 YYYY-MM-DDTHH:mm"),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("logs:view")),
     db: Session = Depends(get_db)
 ):
     """
@@ -100,7 +100,7 @@ async def get_audit_logs(
 async def get_log_stats(
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("logs:view")),
     db: Session = Depends(get_db)
 ):
     """
@@ -124,7 +124,7 @@ async def export_audit_logs(
     success: Optional[bool] = Query(None),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("logs:view")),
     db: Session = Depends(get_db)
 ):
     """

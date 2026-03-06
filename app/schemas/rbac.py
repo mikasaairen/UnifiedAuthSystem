@@ -25,9 +25,14 @@ class RoleUpdate(BaseModel):
 class RoleResponse(RoleBase):
     """角色响应模型"""
     id: int
-    
+
     class Config:
         from_attributes = True
+
+
+class RoleResponseWithCount(RoleResponse):
+    """角色响应（含权限数量，用于列表）"""
+    permission_count: int = 0
 
 
 class BatchRoleIdsRequest(BaseModel):
@@ -69,9 +74,16 @@ class PermissionUpdate(BaseModel):
 class PermissionResponse(PermissionBase):
     """权限响应模型"""
     id: int
-    
+
     class Config:
         from_attributes = True
+
+
+class PermissionResponseWithResource(PermissionResponse):
+    """权限响应（含关联资源信息，便于细粒度展示）"""
+    resource_name: Optional[str] = None
+    resource_path: Optional[str] = None
+    resource_type: Optional[str] = None
 
 
 class ResourceBase(BaseModel):

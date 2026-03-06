@@ -190,6 +190,24 @@ button[type="submit"]:hover, .btn-primary:hover { background: #66b1ff; }
 .message-error { background: #f56c6c; color: #fff; }
 .message-info { background: #409eff; color: #fff; }
 
+.assign-permissions-list { max-height: 280px; overflow-y: auto; padding: 8px 0; }
+.assign-perm-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    cursor: pointer;
+}
+.assign-perm-item input { margin: 0; }
+.assign-perm-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+    font-size: 13px;
+    color: #606266;
+}
+
 /* 工作台 */
 .workbench-category {
     font-size: 15px;

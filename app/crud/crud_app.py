@@ -11,6 +11,17 @@ from app.schemas.application import ApplicationCreate, ApplicationUpdate
 
 
 class CRUDApp(CRUDBase[Application, ApplicationCreate, ApplicationUpdate]):
+    def get_multi(
+        self, db: Session, *, skip: int = 0, limit: int = 100
+    ) -> List[Application]:
+        return (
+            db.query(Application)
+            .order_by(Application.id)
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
     def get_by_app_id(self, db: Session, *, app_id: str) -> Optional[Application]:
         """
         根据应用ID获取应用
@@ -68,11 +79,6 @@ class CRUDApp(CRUDBase[Application, ApplicationCreate, ApplicationUpdate]):
         if not user or not user.is_active:
             return False
         
-        # 管理员拥有所有权限
-        if user.is_admin:
-            return True
-        
-        # 通过 RBAC 检查权限（通过角色-权限关系）
         from app.crud.crud_rbac import crud_role
         return crud_role.check_user_permission(
             db, user_id=user_id, permission_code=permission_code
@@ -85,14 +91,6 @@ class CRUDApp(CRUDBase[Application, ApplicationCreate, ApplicationUpdate]):
         user = db.query(User).filter(User.id == user_id).first()
         if not user or not user.is_active:
             return []
-        
-        # 管理员可以访问所有应用
-        if user.is_admin:
-            return db.query(Application).filter(
-                Application.status == "active"
-            ).all()
-        
-        # 通过用户的权限获取应用（权限关联到资源，资源关联到应用）
         from app.crud.crud_rbac import crud_role
         from app.models.rbac import Permission, Resource
         

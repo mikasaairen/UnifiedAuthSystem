@@ -4,6 +4,7 @@
 
 let currentUser = null;
 let isAdmin = false;
+let myPermissionCodes = [];
 
 document.addEventListener('DOMContentLoaded', async function() {
     const token = localStorage.getItem('access_token');
@@ -14,25 +15,39 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     await loadCurrentUser();
 
-    if (!isAdmin) {
-        document.querySelectorAll('.nav-item[data-page="users"], .nav-item[data-page="roles"], .nav-item[data-page="apps"], .nav-item[data-page="logs"]').forEach(el => {
-            el.style.display = 'none';
-        });
-    }
-
     initNavigation();
     loadOverview();
 });
 
+function hasAdminRole(user) {
+    return (user && user.roles && Array.isArray(user.roles)) && user.roles.some(function(r) { return r.name === 'admin'; });
+}
+
+function roleDisplayName(user) {
+    if (!user || !user.roles || !user.roles.length) return '普通用户';
+    if (hasAdminRole(user)) return '管理员';
+    return user.roles.map(function(r) { return r.name; }).join('、') || '普通用户';
+}
+
 async function loadCurrentUser() {
     try {
         currentUser = await API.get('/users/me');
-        isAdmin = currentUser.is_admin;
+        isAdmin = hasAdminRole(currentUser);
 
         const userInfoTopbar = document.getElementById('userInfoTopbar');
         if (userInfoTopbar) {
-            userInfoTopbar.innerHTML = `<strong>${currentUser.full_name || currentUser.username}</strong><span class="topbar-role">${currentUser.is_admin ? '管理员' : '普通用户'}</span>`;
+            userInfoTopbar.innerHTML = `<strong>${currentUser.full_name || currentUser.username}</strong><span class="topbar-role">${roleDisplayName(currentUser)}</span>`;
         }
+
+        // 拉取当前用户权限列表，用于控制导航可见性（仅按角色权限，不再使用 is_admin）
+        try {
+            const res = await API.get('/rbac/me/permissions');
+            myPermissionCodes = Array.isArray(res.permission_codes) ? res.permission_codes : [];
+        } catch (e) {
+            myPermissionCodes = [];
+        }
+
+        applyNavVisibility();
     } catch (error) {
         console.error('加载用户信息失败:', error);
         if (error.status === 401 || error.message.includes('401')) {
@@ -40,6 +55,27 @@ async function loadCurrentUser() {
             window.location.href = '/login';
         }
     }
+}
+
+function applyNavVisibility() {
+    // 工作台、概览：所有登录用户可见
+    const map = {
+        users: 'users:manage',
+        roles: 'rbac:manage',
+        apps: 'apps:manage',
+        logs: 'logs:view',
+    };
+    Object.keys(map).forEach(function(page) {
+        const items = document.querySelectorAll('.nav-item[data-page="' + page + '"]');
+        const needCode = map[page];
+        let visible = false;
+        if (myPermissionCodes && myPermissionCodes.indexOf(needCode) !== -1) {
+            visible = true;
+        }
+        items.forEach(function(el) {
+            el.style.display = visible ? '' : 'none';
+        });
+    });
 }
 
 function initNavigation() {
@@ -172,7 +208,7 @@ async function loadUsers() {
         const roleFilter = document.getElementById('userRoleFilter')?.value;
         let url = '/users/?limit=500';
         if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
-        if (roleFilter === 'true' || roleFilter === 'false') url += '&is_admin=' + roleFilter;
+        if (roleFilter && roleFilter.trim()) url += '&role_name=' + encodeURIComponent(roleFilter.trim());
         const users = await API.get(url);
         if (feedbackEl) {
             if (keyword) {
@@ -194,7 +230,7 @@ async function loadUsers() {
                 <td>${user.email}</td>
                 <td>${user.full_name || '-'}</td>
                 <td><span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">${user.is_active ? '已激活' : '已禁用'}</span></td>
-                <td>${user.is_admin ? '管理员' : '普通用户'}</td>
+                <td>${(user.roles && user.roles.length) ? user.roles.map(r => r.name).join('、') : '无角色'}</td>
                 <td>
                     <button class="btn btn-sm btn-primary" onclick="editUser(${user.id})">编辑</button>
                     ${user.is_active ?
@@ -235,7 +271,16 @@ async function batchDeleteUsers() {
     }
 }
 
-function showCreateUserModal() {
+async function showCreateUserModal() {
+    var roles = [];
+    try {
+        roles = await API.get('/rbac/roles');
+    } catch (e) {
+        roles = [];
+    }
+    var rolesHtml = roles.length === 0
+        ? '<p class="workbench-loading">暂无角色</p>'
+        : roles.map(r => `<label class="assign-perm-item"><input type="checkbox" name="role_id" value="${r.id}"> ${r.name}${r.description ? '（' + r.description + '）' : ''}</label>`).join('');
     showModal('创建用户', `
         <form id="createUserForm">
             <div class="form-group">
@@ -255,9 +300,8 @@ function showCreateUserModal() {
                 <input type="password" name="password" required>
             </div>
             <div class="form-group">
-                <label>
-                    <input type="checkbox" name="is_admin"> 管理员
-                </label>
+                <label>分配角色</label>
+                <div class="assign-permissions-list">${rolesHtml}</div>
             </div>
             <div class="modal-actions">
                 <button type="submit" class="btn btn-primary">创建</button>
@@ -266,12 +310,13 @@ function showCreateUserModal() {
         </form>
     `, async (form) => {
         const formData = new FormData(form);
-        await API.post('/users/register', {
+        var roleIds = Array.from(form.querySelectorAll('input[name="role_id"]:checked')).map(function(cb) { return parseInt(cb.value, 10); });
+        await API.post('/users/', {
             username: formData.get('username'),
             email: formData.get('email'),
             full_name: formData.get('full_name'),
             password: formData.get('password'),
-            is_admin: formData.has('is_admin')
+            role_ids: roleIds
         });
         closeModal();
         loadUsers();
@@ -313,7 +358,14 @@ async function deleteUser(userId) {
 
 async function editUser(userId) {
     try {
-        const user = await API.get(`/users/${userId}`);
+        const [user, roles] = await Promise.all([
+            API.get(`/users/${userId}`),
+            API.get('/rbac/roles')
+        ]);
+        const userRoleIds = (user.roles || []).map(r => r.id);
+        const rolesHtml = roles.length === 0
+            ? '<p class="workbench-loading">暂无角色</p>'
+            : roles.map(r => `<label class="assign-perm-item"><input type="checkbox" name="role_id" value="${r.id}" ${userRoleIds.indexOf(r.id) >= 0 ? 'checked' : ''}> ${r.name}${r.description ? '（' + r.description + '）' : ''}</label>`).join('');
         showModal('编辑用户', `
             <form id="editUserForm">
                 <input type="hidden" name="id" value="${user.id}">
@@ -335,10 +387,8 @@ async function editUser(userId) {
                     <small class="form-hint">如需修改密码请在此输入新密码，不修改则留空</small>
                 </div>
                 <div class="form-group">
-                    <label>
-                        <input type="checkbox" name="is_admin" ${user.is_admin ? 'checked' : ''}>
-                        管理员
-                    </label>
+                    <label>分配角色</label>
+                    <div class="assign-permissions-list">${rolesHtml}</div>
                 </div>
                 <div class="modal-actions">
                     <button type="submit" class="btn btn-primary">保存</button>
@@ -349,12 +399,15 @@ async function editUser(userId) {
             const formData = new FormData(form);
             const data = {
                 email: formData.get('email'),
-                full_name: formData.get('full_name'),
-                is_admin: formData.has('is_admin')
+                full_name: formData.get('full_name')
             };
             const pwd = formData.get('password');
             if (pwd && String(pwd).trim()) data.password = String(pwd).trim();
+            // 1) 更新基本信息
             await API.put(`/users/${userId}`, data);
+            // 2) 更新角色分配
+            const roleIds = Array.from(form.querySelectorAll('input[name="role_id"]:checked')).map(function(cb) { return parseInt(cb.value, 10); });
+            await API.post(`/rbac/users/${userId}/roles`, { role_ids: roleIds });
             closeModal();
             loadUsers();
             showMessage('用户编辑成功', 'success');
@@ -383,7 +436,7 @@ async function loadRoles() {
                 <td>${role.id}</td>
                 <td>${role.name}</td>
                 <td>${role.description || '-'}</td>
-                <td>${role.permissions ? role.permissions.length : 0}</td>
+                <td>${role.permission_count != null ? role.permission_count : (role.permissions ? role.permissions.length : 0)}</td>
                 <td>
                     <button class="btn btn-sm btn-primary" onclick="editRole(${role.id})">编辑</button>
                     <button class="btn btn-sm btn-info" onclick="assignPermissions(${role.id})">分配权限</button>
@@ -487,8 +540,48 @@ async function editRole(roleId) {
     }
 }
 
-function assignPermissions(roleId) {
-    showMessage('分配权限功能请通过权限管理操作', 'info');
+async function assignPermissions(roleId) {
+    try {
+        const [role, allPerms, rolePermsRes] = await Promise.all([
+            API.get('/rbac/roles/' + roleId),
+            API.get('/rbac/permissions'),
+            API.get('/rbac/roles/' + roleId + '/permissions')
+        ]);
+        const rolePermIds = (rolePermsRes && rolePermsRes.permission_ids) ? rolePermsRes.permission_ids : [];
+        const checkboxesHtml = (allPerms.length === 0)
+            ? '<p class="workbench-loading">暂无权限，请先在权限管理中创建权限。</p>'
+            : allPerms.map(p => `<label class="assign-perm-item"><input type="checkbox" name="perm" value="${p.id}" ${rolePermIds.indexOf(p.id) >= 0 ? 'checked' : ''}><span>${p.code}（${p.name}）${p.resource_path ? ' - ' + p.resource_path : ''}</span></label>`).join('');
+        showModal('为角色「' + (role.name || '') + '」分配权限', `
+            <form id="assignPermissionsForm">
+                <div class="form-group">
+                    <p>勾选该角色拥有的权限：</p>
+                    <div class="assign-perm-toolbar">
+                        <label><input type="checkbox" id="assignPermSelectAll" onchange="toggleAssignPermSelectAll(this)"> 全选</label>
+                    </div>
+                    <div class="assign-permissions-list">${checkboxesHtml}</div>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                </div>
+            </form>
+        `, async (form) => {
+            const permIds = Array.from(form.querySelectorAll('input[name="perm"]:checked')).map(function(cb) { return parseInt(cb.value, 10); });
+            await API.post('/rbac/roles/' + roleId + '/permissions', { permission_ids: permIds });
+            closeModal();
+            loadRoles();
+            loadPermissions();
+            showMessage('权限分配已保存', 'success');
+        });
+    } catch (error) {
+        showMessage('加载失败: ' + (error.message || ''), 'error');
+    }
+}
+
+function toggleAssignPermSelectAll(checkbox) {
+    document.querySelectorAll('#assignPermissionsForm input[name="perm"]').forEach(function(cb) {
+        cb.checked = checkbox.checked;
+    });
 }
 
 // ========== 权限管理 ==========

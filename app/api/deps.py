@@ -98,16 +98,24 @@ async def get_current_active_user(
     return current_user
 
 
-async def get_current_admin_user(
-    current_user: User = Depends(get_current_active_user)
-) -> User:
+def require_permission(permission_code: str):
     """
-    获取当前管理员用户
+    细粒度访问控制：要求当前用户拥有指定权限（仅通过角色-权限-资源映射）。
     """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="权限不足，需要管理员权限"
-        )
-    return current_user
+
+    async def _dependency(
+        current_user: User = Depends(get_current_active_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        from app.crud.crud_rbac import crud_role
+        if not crud_role.check_user_permission(
+            db, user_id=current_user.id, permission_code=permission_code
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"权限不足，需要权限：{permission_code}",
+            )
+        return current_user
+
+    return _dependency
 

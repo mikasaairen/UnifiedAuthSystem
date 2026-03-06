@@ -5,9 +5,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user, get_current_admin_user, get_db
+from app.api.deps import get_current_active_user, get_db, require_permission
 from app.crud import crud_user, crud_audit
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserBatchDeleteRequest
+from app.schemas.user import UserCreate, UserCreateByAdmin, UserUpdate, UserResponse, UserBatchDeleteRequest
 from app.models.user import User
 from app.models.session import Session as SessionModel
 
@@ -59,6 +59,43 @@ async def register(
     return user
 
 
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user_by_admin(
+    user_in: UserCreateByAdmin,
+    request: Request,
+    current_user: User = Depends(require_permission("users:manage")),
+    db: Session = Depends(get_db),
+):
+    """
+    管理员创建用户，可同时分配角色（role_ids）。
+    """
+    if crud_user.get_by_username(db, username=user_in.username):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名已存在")
+    if crud_user.get_by_email(db, email=user_in.email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱已被注册")
+    role_ids = user_in.role_ids or []
+    user = crud_user.create(db, obj_in=user_in)
+    if role_ids:
+        from app.crud.crud_rbac import crud_role
+        try:
+            crud_role.assign_to_user(db, user_id=user.id, role_ids=role_ids)
+        except ValueError:
+            pass
+    crud_audit.create_log(
+        db,
+        actor_user_id=current_user.id,
+        target_user_id=user.id,
+        action="user_register",
+        app_id=None,
+        resource=None,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        success=True,
+        details=f'{{"username": "{user.username}", "by_admin": true}}',
+    )
+    return user
+
+
 @router.get("/me", response_model=UserResponse)
 async def read_user_me(
     current_user: User = Depends(get_current_active_user)
@@ -73,24 +110,25 @@ async def read_user_me(
 async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    is_active: bool = Query(None, description="是否激活"),
-    is_admin: Optional[bool] = Query(None, description="按角色筛选：True 管理员 / False 普通用户"),
+    is_active: Optional[bool] = Query(None, description="是否激活"),
+    role_name: Optional[str] = Query(None, description="按角色名筛选：admin / user / operator"),
     keyword: Optional[str] = Query(None, description="搜索用户名或邮箱（模糊）"),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
-    获取用户列表（管理员专用），支持关键词模糊搜索、按角色筛选，默认按 ID 升序
+    获取用户列表，支持关键词模糊搜索、按角色名筛选，默认按 ID 升序
     """
     from sqlalchemy import or_
+    from app.models.rbac import Role
     query = db.query(User)
     if keyword and keyword.strip():
         kw = f"%{keyword.strip()}%"
         query = query.filter(or_(User.username.like(kw), User.email.like(kw)))
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
-    if is_admin is not None:
-        query = query.filter(User.is_admin == is_admin)
+    if role_name and role_name.strip():
+        query = query.join(User.roles).filter(Role.name == role_name.strip()).distinct()
     users = query.order_by(User.id).offset(skip).limit(limit).all()
     return users
 
@@ -98,11 +136,11 @@ async def list_users(
 @router.get("/{user_id}", response_model=UserResponse)
 async def read_user(
     user_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
-    根据ID查询用户信息（仅限自己或管理员）
+    根据ID查询用户信息（用户管理页面使用，需 users:manage 权限）
     """
     user = crud_user.get(db, id=user_id)
     if not user:
@@ -110,14 +148,6 @@ async def read_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="用户不存在"
         )
-    
-    # 只能查看自己的信息，除非是管理员
-    if user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="无权访问该用户信息"
-        )
-    
     return user
 
 
@@ -126,7 +156,7 @@ async def update_user(
     user_id: int,
     user_in: UserUpdate,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -169,7 +199,7 @@ async def update_user(
 async def disable_user(
     user_id: int,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -208,7 +238,7 @@ async def disable_user(
 async def enable_user(
     user_id: int,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -247,7 +277,7 @@ async def enable_user(
 async def delete_user(
     user_id: int,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -286,7 +316,7 @@ async def delete_user(
 async def batch_delete_users(
     body: UserBatchDeleteRequest,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """批量删除用户（管理员专用）。会跳过当前登录用户，不可删除自己。"""

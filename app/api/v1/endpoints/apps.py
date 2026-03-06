@@ -5,9 +5,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user, get_current_admin_user, get_db
+from app.api.deps import get_current_active_user, get_db, require_permission
 from app.core.cors import invalidate_cors_cache
 from app.crud import crud_app, crud_audit
+from app.crud.crud_rbac import crud_resource, crud_permission
 from app.models.application import Application
 from app.models.user import User
 from app.schemas.application import (
@@ -20,12 +21,45 @@ from fastapi import Request
 router = APIRouter()
 
 
+def _ensure_app_resource_and_permission(db: Session, app: Application) -> None:
+    """
+    审核通过/启用应用时，自动为该应用创建受控资源与默认权限，便于在角色权限中分配。
+    若该应用下已有资源则跳过。
+    """
+    existing = crud_resource.get_by_app(db, app_id=app.id)
+    if existing:
+        return
+    path = app.callback_url or f"/app/{app.app_id}"
+    resource = crud_resource.create(
+        db,
+        obj_in={
+            "app_id": app.id,
+            "name": f"应用：{app.app_name}",
+            "resource_type": "api",
+            "path": path,
+            "method": None,
+            "description": f"接入应用 {app.app_name}，审核通过后自动加入",
+        },
+    )
+    code = f"app:{app.app_id}:access"
+    if not crud_permission.get_by_code(db, code=code):
+        crud_permission.create(
+            db,
+            obj_in={
+                "code": code,
+                "name": f"访问应用 {app.app_name}",
+                "resource_id": resource.id,
+                "description": f"可访问接入应用：{app.app_name}",
+            },
+        )
+
+
 # ========== 应用注册和管理（管理员专用）==========
 @router.post("/register", response_model=ApplicationRegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register_application(
     app_in: ApplicationCreate,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -91,7 +125,7 @@ async def register_application(
 async def batch_register_applications(
     body: BatchRegisterRequest,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -154,7 +188,7 @@ async def list_applications(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     status_filter: str = Query(None, description="状态过滤：pending/active/disabled"),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -214,7 +248,7 @@ async def list_workbench_apps(
 async def approve_application(
     app_id: str,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -226,7 +260,7 @@ async def approve_application(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="应用不存在"
         )
-    
+    _ensure_app_resource_and_permission(db, app)
     # 记录审计日志
     crud_audit.create_log(
         db,
@@ -247,7 +281,7 @@ async def approve_application(
 async def disable_application(
     app_id: str,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -280,11 +314,11 @@ async def disable_application(
 async def enable_application(
     app_id: str,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
-    启用应用（管理员专用），将状态设为 active
+    启用应用（管理员专用），将状态设为 active；并自动加入权限分配资源（若尚未存在）。
     """
     app = crud_app.update_status(db, app_id=app_id, status="active")
     if not app:
@@ -292,6 +326,7 @@ async def enable_application(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="应用不存在"
         )
+    _ensure_app_resource_and_permission(db, app)
     crud_audit.create_log(
         db,
         actor_user_id=current_user.id,
@@ -311,7 +346,7 @@ async def enable_application(
 async def delete_application_post(
     request: Request,
     app_id: str = Query(..., description="应用ID"),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -346,7 +381,7 @@ async def delete_application_post(
 @router.get("/{app_id}", response_model=ApplicationResponse)
 async def get_application(
     app_id: str,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -366,7 +401,7 @@ async def update_application(
     app_id: str,
     app_in: ApplicationUpdate,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -407,7 +442,7 @@ async def update_application(
 async def delete_application(
     app_id: str,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """
@@ -443,10 +478,10 @@ async def delete_application(
 async def batch_approve_applications(
     body: BatchIdsRequest,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
-    """批量审核通过应用（将 status 设为 active）"""
+    """批量审核通过应用（将 status 设为 active），并自动加入权限分配资源。"""
     updated = 0
     for app_id in body.app_ids:
         app = crud_app.get_by_app_id(db, app_id=app_id)
@@ -454,6 +489,8 @@ async def batch_approve_applications(
             app.status = "active"
             app.is_active = True
             db.commit()
+            db.refresh(app)
+            _ensure_app_resource_and_permission(db, app)
             updated += 1
             crud_audit.create_log(
                 db, actor_user_id=current_user.id, action="app_approve", app_id=app.id,
@@ -470,7 +507,7 @@ async def batch_approve_applications(
 async def batch_disable_applications(
     body: BatchIdsRequest,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """批量禁用应用"""
@@ -494,7 +531,7 @@ async def batch_disable_applications(
 @router.get("/export")
 async def export_applications(
     app_ids: Optional[str] = Query(None, description="逗号分隔的 app_id，不传则导出全部"),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """批量导出应用配置（不含 app_secret）"""
@@ -519,7 +556,7 @@ async def export_applications(
 async def batch_delete_applications(
     body: BatchIdsRequest,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """批量删除应用（管理员专用）"""
@@ -542,7 +579,7 @@ async def batch_delete_applications(
 async def batch_update_callbacks(
     body: BatchCallbacksRequest,
     request: Request,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("apps:manage")),
     db: Session = Depends(get_db)
 ):
     """批量更新应用回调地址"""

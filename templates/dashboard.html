@@ -94,8 +94,9 @@
                     <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteUsers()">批量删除</button>
                     <select id="userRoleFilter" onchange="loadUsers()">
                         <option value="">全部</option>
-                        <option value="true">管理员</option>
-                        <option value="false">普通用户</option>
+                        <option value="admin">管理员</option>
+                        <option value="user">普通用户</option>
+                        <option value="operator">操作员</option>
                     </select>
                     <div class="search-box user-search-bar">
                         <input type="text" id="userSearch" placeholder="输入用户名或邮箱进行搜索">

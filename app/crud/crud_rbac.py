@@ -56,41 +56,27 @@ class CRUDRole(CRUDBase[Role, None, None]):
         return user
     
     def get_user_permissions(self, db: Session, *, user_id: int) -> List[Permission]:
-        """获取用户的所有权限（通过角色）"""
+        """获取用户的所有权限（仅通过角色，不再使用 is_admin 绕过）"""
         user = db.query(User).filter(User.id == user_id).first()
-        if not user:
+        if not user or not user.is_active:
             return []
-        
-        # 管理员拥有所有权限
-        if user.is_admin:
-            return db.query(Permission).all()
-        
-        # 通过角色获取权限
         permissions = set()
         for role in user.roles:
             for perm in role.permissions:
                 permissions.add(perm)
-        
         return list(permissions)
-    
+
     def check_user_permission(
         self, db: Session, *, user_id: int, permission_code: str
     ) -> bool:
-        """检查用户是否拥有指定权限"""
+        """检查用户是否拥有指定权限（仅通过角色）"""
         user = db.query(User).filter(User.id == user_id).first()
         if not user or not user.is_active:
             return False
-        
-        # 管理员拥有所有权限
-        if user.is_admin:
-            return True
-        
-        # 检查用户角色是否拥有该权限
         for role in user.roles:
             for perm in role.permissions:
                 if perm.code == permission_code:
                     return True
-        
         return False
 
 

@@ -126,7 +126,7 @@ async function loadUserInfo() {
                 <p><strong>用户名:</strong> ${user.username}</p>
                 <p><strong>邮箱:</strong> ${user.email}</p>
                 <p><strong>状态:</strong> ${user.is_active ? '已激活' : '未激活'}</p>
-                <p><strong>角色:</strong> ${user.is_admin ? '管理员' : '普通用户'}</p>
+                <p><strong>角色:</strong> ${(user.roles && user.roles.length) ? user.roles.map(r => r.name).join('、') : '普通用户'}</p>
             `;
         }
     } catch (error) {
