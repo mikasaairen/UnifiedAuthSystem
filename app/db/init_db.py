@@ -146,6 +146,23 @@ def init_db(db: Session) -> None:
     # RBAC：系统管理端资源、权限及 admin 角色权限分配
     seed_rbac_system(db)
 
+    # 为 admin 补齐已接入应用的访问权限（app:xxx:access）
+    admin_role = crud_role.get_by_name(db, name="admin")
+    if admin_role:
+        for app in db.query(Application).filter(
+            Application.status == "active",
+            Application.app_id != SYSTEM_APP_ID,
+        ).all():
+            code = f"app:{app.app_id}:access"
+            perm = crud_permission.get_by_code(db, code=code)
+            if perm and perm.id not in [p.id for p in admin_role.permissions]:
+                crud_role.assign_permissions(
+                    db,
+                    role_id=admin_role.id,
+                    permission_ids=[p.id for p in admin_role.permissions] + [perm.id],
+                )
+                print(f"✓ admin 已补充分配应用访问权限：{app.app_name}")
+
     # 迁移：原有 is_admin 用户归为 admin 角色，其余归为 user 角色（彻底只用角色）
     admin_role = crud_role.get_by_name(db, name="admin")
     user_role = crud_role.get_by_name(db, name="user")

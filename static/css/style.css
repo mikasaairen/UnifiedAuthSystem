@@ -190,22 +190,73 @@ button[type="submit"]:hover, .btn-primary:hover { background: #66b1ff; }
 .message-error { background: #f56c6c; color: #fff; }
 .message-info { background: #409eff; color: #fff; }
 
-.assign-permissions-list { max-height: 280px; overflow-y: auto; padding: 8px 0; }
-.assign-perm-item {
-    display: flex;
+.assign-permissions-list {
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 12px;
+    background: #fafafa;
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px 20px;
+}
+/* 覆盖 form-group label 的 display:block，确保复选框与文本同行、复选框在左 */
+.assign-permissions-list .assign-perm-item {
+    display: inline-flex !important;
+    flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
+    justify-content: flex-start;
     gap: 8px;
-    padding: 6px 0;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+    margin: 0;
+}
+.assign-permissions-list .assign-perm-item input[type="checkbox"] {
+    order: -1;
+    margin: 0;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
     cursor: pointer;
 }
-.assign-perm-item input { margin: 0; }
+.assign-permissions-list .assign-perm-item:hover {
+    background: #f0f2f5;
+}
+.assign-permissions-list .assign-perm-item .assign-perm-label {
+    font-size: 14px;
+    color: #303133;
+    line-height: 1.4;
+}
 .assign-perm-toolbar {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
-    margin-bottom: 4px;
+    justify-content: flex-start;
+    margin-bottom: 8px;
     font-size: 13px;
     color: #606266;
+}
+.assign-perm-toolbar label {
+    cursor: pointer;
+    display: inline-flex !important;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+}
+.assign-perm-toolbar input[type="checkbox"] {
+    order: -1;
+    margin: 0;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+}
+.assign-permissions-list .workbench-loading {
+    padding: 16px 0;
 }
 
 /* 工作台 */

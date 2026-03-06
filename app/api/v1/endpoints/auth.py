@@ -138,6 +138,14 @@ async def login(
                     detail="redirect_uri 与应用注册的回调地址不一致"
                 )
             else:
+                from app.crud.crud_rbac import crud_role
+                if not crud_role.check_user_permission(
+                    db, user_id=user.id, permission_code=f"app:{client_id}:access"
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="您暂无该应用的访问权限，请联系管理员分配角色"
+                    )
                 code = generate_authorization_code(
                     user_id=user.id,
                     username=user.username,
@@ -313,6 +321,16 @@ async def authorize(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="redirect_uri 与应用注册的回调地址不一致"
         )
+    # 仅当用户拥有该应用的访问权限时允许发码
+    from app.crud.crud_rbac import crud_role
+    app_access_perm = f"app:{client_id}:access"
+    if current_user and not crud_role.check_user_permission(
+        db, user_id=current_user.id, permission_code=app_access_perm
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="您暂无该应用的访问权限，请联系管理员分配角色"
+        )
     # 已登录（Cookie 或 Bearer）：直接生成授权码并重定向，无需再进登录页
     if current_user:
         code = generate_authorization_code(
@@ -348,6 +366,14 @@ async def create_authorization_code_for_logged_in_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="redirect_uri 与应用注册的回调地址不一致"
+        )
+    from app.crud.crud_rbac import crud_role
+    if not crud_role.check_user_permission(
+        db, user_id=current_user.id, permission_code=f"app:{client_id}:access"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="您暂无该应用的访问权限，请联系管理员分配角色"
         )
     code = generate_authorization_code(
         user_id=current_user.id,

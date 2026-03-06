@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_active_user, get_db, require_permission
 from app.core.cors import invalidate_cors_cache
 from app.crud import crud_app, crud_audit
-from app.crud.crud_rbac import crud_resource, crud_permission
+from app.crud.crud_rbac import crud_resource, crud_permission, crud_role
 from app.models.application import Application
 from app.models.user import User
 from app.schemas.application import (
@@ -24,34 +24,43 @@ router = APIRouter()
 def _ensure_app_resource_and_permission(db: Session, app: Application) -> None:
     """
     审核通过/启用应用时，自动为该应用创建受控资源与默认权限，便于在角色权限中分配。
-    若该应用下已有资源则跳过。
+    若该应用下已有资源则跳过创建；admin 角色自动获得该应用访问权限。
     """
     existing = crud_resource.get_by_app(db, app_id=app.id)
-    if existing:
-        return
-    path = app.callback_url or f"/app/{app.app_id}"
-    resource = crud_resource.create(
-        db,
-        obj_in={
-            "app_id": app.id,
-            "name": f"应用：{app.app_name}",
-            "resource_type": "api",
-            "path": path,
-            "method": None,
-            "description": f"接入应用 {app.app_name}，审核通过后自动加入",
-        },
-    )
-    code = f"app:{app.app_id}:access"
-    if not crud_permission.get_by_code(db, code=code):
-        crud_permission.create(
+    if not existing:
+        path = app.callback_url or f"/app/{app.app_id}"
+        resource = crud_resource.create(
             db,
             obj_in={
-                "code": code,
-                "name": f"访问应用 {app.app_name}",
-                "resource_id": resource.id,
-                "description": f"可访问接入应用：{app.app_name}",
+                "app_id": app.id,
+                "name": f"应用：{app.app_name}",
+                "resource_type": "api",
+                "path": path,
+                "method": None,
+                "description": f"接入应用 {app.app_name}，审核通过后自动加入",
             },
         )
+        code = f"app:{app.app_id}:access"
+        perm = crud_permission.get_by_code(db, code=code)
+        if not perm:
+            crud_permission.create(
+                db,
+                obj_in={
+                    "code": code,
+                    "name": f"访问应用 {app.app_name}",
+                    "resource_id": resource.id,
+                    "description": f"可访问接入应用：{app.app_name}",
+                },
+            )
+    perm = crud_permission.get_by_code(db, code=f"app:{app.app_id}:access")
+    if perm:
+        admin_role = crud_role.get_by_name(db, name="admin")
+        if admin_role and perm.id not in [p.id for p in admin_role.permissions]:
+            crud_role.assign_permissions(
+                db,
+                role_id=admin_role.id,
+                permission_ids=[p.id for p in admin_role.permissions] + [perm.id],
+            )
 
 
 # ========== 应用注册和管理（管理员专用）==========
@@ -228,9 +237,9 @@ async def list_workbench_apps(
     db: Session = Depends(get_db)
 ):
     """
-    工作台：返回所有已启用（已接入）的应用，管理员与普通用户均可访问；审核通过后自动出现在工作台。
+    工作台：返回当前用户有权限访问的已接入应用（基于角色-权限分配）。
     """
-    apps = db.query(Application).filter(Application.status == "active").all()
+    apps = crud_app.get_user_apps(db, user_id=current_user.id)
     return {
         "apps": [
             {

@@ -280,7 +280,7 @@ async function showCreateUserModal() {
     }
     var rolesHtml = roles.length === 0
         ? '<p class="workbench-loading">暂无角色</p>'
-        : roles.map(r => `<label class="assign-perm-item"><input type="checkbox" name="role_id" value="${r.id}"> ${r.name}${r.description ? '（' + r.description + '）' : ''}</label>`).join('');
+        : roles.map(r => `<label class="assign-perm-item"><input type="checkbox" name="role_id" value="${r.id}"><span class="assign-perm-label">${r.name}${r.description ? '（' + r.description + '）' : ''}</span></label>`).join('');
     showModal('创建用户', `
         <form id="createUserForm">
             <div class="form-group">
@@ -365,7 +365,7 @@ async function editUser(userId) {
         const userRoleIds = (user.roles || []).map(r => r.id);
         const rolesHtml = roles.length === 0
             ? '<p class="workbench-loading">暂无角色</p>'
-            : roles.map(r => `<label class="assign-perm-item"><input type="checkbox" name="role_id" value="${r.id}" ${userRoleIds.indexOf(r.id) >= 0 ? 'checked' : ''}> ${r.name}${r.description ? '（' + r.description + '）' : ''}</label>`).join('');
+            : roles.map(r => `<label class="assign-perm-item"><input type="checkbox" name="role_id" value="${r.id}" ${userRoleIds.indexOf(r.id) >= 0 ? 'checked' : ''}><span class="assign-perm-label">${r.name}${r.description ? '（' + r.description + '）' : ''}</span></label>`).join('');
         showModal('编辑用户', `
             <form id="editUserForm">
                 <input type="hidden" name="id" value="${user.id}">
@@ -550,7 +550,7 @@ async function assignPermissions(roleId) {
         const rolePermIds = (rolePermsRes && rolePermsRes.permission_ids) ? rolePermsRes.permission_ids : [];
         const checkboxesHtml = (allPerms.length === 0)
             ? '<p class="workbench-loading">暂无权限，请先在权限管理中创建权限。</p>'
-            : allPerms.map(p => `<label class="assign-perm-item"><input type="checkbox" name="perm" value="${p.id}" ${rolePermIds.indexOf(p.id) >= 0 ? 'checked' : ''}><span>${p.code}（${p.name}）${p.resource_path ? ' - ' + p.resource_path : ''}</span></label>`).join('');
+            : allPerms.map(p => `<label class="assign-perm-item"><input type="checkbox" name="perm" value="${p.id}" ${rolePermIds.indexOf(p.id) >= 0 ? 'checked' : ''}><span class="assign-perm-label">${p.name || p.code}</span></label>`).join('');
         showModal('为角色「' + (role.name || '') + '」分配权限', `
             <form id="assignPermissionsForm">
                 <div class="form-group">
