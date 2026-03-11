@@ -167,33 +167,48 @@ function escapeHtml(s) {
 }
 
 async function loadOverview() {
-    try {
-        const [users, apps, roles, logs] = await Promise.all([
-            API.get('/users/'),
-            API.get('/apps/'),
-            API.get('/rbac/roles'),
-            API.get('/logs/')
-        ]);
-
-        const totalUsersEl = document.getElementById('totalUsers');
-        const totalAppsEl = document.getElementById('totalApps');
-        const totalRolesEl = document.getElementById('totalRoles');
-        const todayLogsEl = document.getElementById('todayLogs');
-        if (totalUsersEl) totalUsersEl.textContent = Array.isArray(users) ? users.length : 0;
-        if (totalAppsEl) totalAppsEl.textContent = Array.isArray(apps) ? apps.length : 0;
-        if (totalRolesEl) totalRolesEl.textContent = Array.isArray(roles) ? roles.length : 0;
-        if (todayLogsEl) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const todayLogs = Array.isArray(logs) ? logs.filter(log => new Date(log.created_at) >= today) : [];
-            todayLogsEl.textContent = todayLogs.length;
-        }
-    } catch (error) {
-        console.error('加载概览数据失败:', error);
-        ['totalUsers', 'totalApps', 'totalRoles', 'todayLogs'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = '0';
+    var codes = myPermissionCodes || [];
+    var grid = document.getElementById('overviewStatsGrid');
+    if (grid) {
+        grid.querySelectorAll('.stat-card[data-permission]').forEach(function(card) {
+            var perm = card.getAttribute('data-permission');
+            card.style.display = (perm && codes.indexOf(perm) !== -1) ? '' : 'none';
         });
+    }
+    async function fetchUsers() {
+        if (codes.indexOf('users:manage') === -1) return;
+        var users = await API.get('/users/');
+        var el = document.getElementById('totalUsers');
+        if (el) el.textContent = Array.isArray(users) ? users.length : 0;
+    }
+    async function fetchApps() {
+        if (codes.indexOf('apps:manage') === -1) return;
+        var apps = await API.get('/apps/');
+        var el = document.getElementById('totalApps');
+        if (el) el.textContent = Array.isArray(apps) ? apps.length : 0;
+    }
+    async function fetchRoles() {
+        if (codes.indexOf('rbac:manage') === -1) return;
+        var roles = await API.get('/rbac/roles');
+        var el = document.getElementById('totalRoles');
+        if (el) el.textContent = Array.isArray(roles) ? roles.length : 0;
+    }
+    async function fetchLogs() {
+        if (codes.indexOf('logs:view') === -1) return;
+        var logs = await API.get('/logs/');
+        var el = document.getElementById('todayLogs');
+        if (el) {
+            var today = new Date();
+            today.setHours(0, 0, 0, 0);
+            var todayLogs = Array.isArray(logs) ? logs.filter(function(log) { return new Date(log.created_at) >= today; }) : [];
+            el.textContent = todayLogs.length;
+        }
+    }
+    var promises = [fetchUsers(), fetchApps(), fetchRoles(), fetchLogs()];
+    try {
+        await Promise.allSettled(promises);
+    } catch (e) {
+        console.error('加载概览数据失败:', e);
     }
 }
 

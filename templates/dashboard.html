@@ -55,22 +55,22 @@
                 </div>
             </div>
 
-            <!-- 概览页面 -->
+            <!-- 概览页面：各统计卡片按权限显示，有权限则展示对应数据 -->
             <div id="overviewPage" class="page-content active">
-                <div class="stats-grid">
-                    <div class="stat-card">
+                <div class="stats-grid" id="overviewStatsGrid">
+                    <div class="stat-card" id="statUsers" data-permission="users:manage" style="display:none">
                         <h3>用户总数</h3>
                         <p class="stat-number" id="totalUsers">-</p>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card" id="statApps" data-permission="apps:manage" style="display:none">
                         <h3>应用总数</h3>
                         <p class="stat-number" id="totalApps">-</p>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card" id="statRoles" data-permission="rbac:manage" style="display:none">
                         <h3>角色总数</h3>
                         <p class="stat-number" id="totalRoles">-</p>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card" id="statLogs" data-permission="logs:view" style="display:none">
                         <h3>今日日志</h3>
                         <p class="stat-number" id="todayLogs">-</p>
                     </div>
