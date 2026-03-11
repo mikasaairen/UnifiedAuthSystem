@@ -55,10 +55,10 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         if user.locked_until and user.locked_until > datetime.utcnow():
             return None
         if not verify_password(password, user.hashed_password):
-            # 失败次数+1，达到阈值则锁定
             user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
             if user.failed_login_attempts >= settings.LOGIN_MAX_FAILS:
                 user.locked_until = datetime.utcnow() + timedelta(minutes=settings.LOGIN_LOCK_MINUTES)
+                user._just_locked = True
             db.add(user)
             db.commit()
             return None

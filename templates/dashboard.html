@@ -5,11 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>统一认证系统 - 管理控制台</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
-    <!-- 右上角：用户信息 + 登出（固定位置） -->
+    <!-- 右上角：用户信息 + 个人中心 + 登出 -->
     <div class="dashboard-topbar">
         <span class="topbar-user" id="userInfoTopbar">加载中...</span>
+        <button type="button" id="profileTopbarBtn" class="btn btn-secondary btn-sm topbar-btn">个人中心</button>
         <button type="button" id="logoutBtn" class="btn btn-secondary btn-sm logout-btn-topbar">登出</button>
     </div>
 
@@ -37,6 +39,9 @@
                 </a>
                 <a href="#" class="nav-item" data-page="logs">
                     <span>📋</span> 审计日志
+                </a>
+                <a href="#" class="nav-item" data-page="system">
+                    <span>⚙️</span> 系统设置
                 </a>
             </nav>
         </aside>
@@ -75,6 +80,30 @@
                         <p class="stat-number" id="todayLogs">-</p>
                     </div>
                 </div>
+                <!-- 数据可视化图表区域：固定高度容器避免闪烁 -->
+                <div id="overviewChartsRow" class="overview-charts-row" data-permission="logs:view" style="display:none">
+                    <div class="chart-card">
+                        <h4>近7天登录趋势</h4>
+                        <div class="chart-container chart-container-line">
+                            <canvas id="loginTrendChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h4>操作类型分布</h4>
+                        <div class="chart-container chart-container-pie">
+                            <canvas id="actionPieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 安全告警卡片 -->
+                <div id="securityAlertCard" class="security-alert-card" data-permission="users:manage" style="display:none">
+                    <h4>安全概览</h4>
+                    <div class="security-stats" id="securityStatsContent">加载中...</div>
+                    <h4 style="margin-top:12px">近期安全告警</h4>
+                    <div id="securityAlertsList" class="security-alerts-list">暂无告警</div>
+                </div>
+
                 <div class="welcome-section">
                     <h2>欢迎使用统一认证系统</h2>
                     <p>系统提供以下核心功能：</p>
@@ -251,6 +280,71 @@
                 </div>
             </div>
 
+            <!-- 个人中心页面 -->
+            <div id="profilePage" class="page-content">
+                <div class="profile-section">
+                    <h3>基本信息</h3>
+                    <div class="profile-info" id="profileInfo">加载中...</div>
+                </div>
+                <div class="profile-section">
+                    <h3>修改密码</h3>
+                    <form id="changePasswordForm" class="profile-form">
+                        <div class="form-group">
+                            <label>旧密码</label>
+                            <input type="password" name="old_password" required autocomplete="current-password">
+                        </div>
+                        <div class="form-group">
+                            <label>新密码</label>
+                            <input type="password" name="new_password" required autocomplete="new-password">
+                            <small class="form-hint">至少6位，需包含大写、小写字母和数字</small>
+                        </div>
+                        <div class="form-group">
+                            <label>确认新密码</label>
+                            <input type="password" name="confirm_password" required autocomplete="new-password">
+                        </div>
+                        <button type="submit" class="btn btn-primary">修改密码</button>
+                    </form>
+                </div>
+                <div class="profile-section">
+                    <h3>活跃会话</h3>
+                    <p class="form-hint">以下是您当前的登录会话，可撤销不信任的会话。</p>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>会话ID</th>
+                                    <th>IP</th>
+                                    <th>浏览器</th>
+                                    <th>创建时间</th>
+                                    <th>过期时间</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sessionsTableBody">
+                                <tr><td colspan="7">加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 系统设置页面 -->
+            <div id="systemPage" class="page-content">
+                <div class="profile-section">
+                    <h3>注册审核</h3>
+                    <div class="form-group" style="display:flex;align-items:center;gap:12px;">
+                        <label style="margin:0">新用户注册需管理员审核</label>
+                        <input type="checkbox" id="toggleApproval" onchange="toggleRegistrationApproval(this)">
+                        <span id="approvalStatus" class="form-hint"></span>
+                    </div>
+                </div>
+                <div class="profile-section">
+                    <h3>Token 黑名单</h3>
+                    <p class="form-hint">当前黑名单大小：<strong id="blacklistSize">-</strong> 条</p>
+                </div>
+            </div>
+
             <!-- 审计日志页面 -->
             <div id="logsPage" class="page-content">
                 <div class="page-header">
@@ -277,6 +371,9 @@
                             <option value="app_enable">应用启用</option>
                             <option value="check_permission">权限检查</option>
                             <option value="introspect">令牌内省</option>
+                            <option value="change_password">修改密码</option>
+                            <option value="account_locked">账户锁定</option>
+                            <option value="security_alert">安全告警</option>
                         </select>
                         <label>结果</label>
                         <select id="logSuccessFilter">

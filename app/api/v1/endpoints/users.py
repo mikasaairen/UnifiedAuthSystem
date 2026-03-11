@@ -4,10 +4,13 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
+from app.core.rate_limit import limiter
 
 from app.api.deps import get_current_active_user, get_db, require_permission
+from app.core.token_blacklist import add_to_blacklist
+from app.core.config import settings
 from app.crud import crud_user, crud_audit
-from app.schemas.user import UserCreate, UserCreateByAdmin, UserUpdate, UserResponse, UserBatchDeleteRequest
+from app.schemas.user import UserCreate, UserCreateByAdmin, UserUpdate, UserResponse, UserBatchDeleteRequest, ChangePasswordRequest, ChangePasswordResponse
 from app.models.user import User
 from app.models.session import Session as SessionModel
 
@@ -15,6 +18,7 @@ router = APIRouter()
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
 async def register(
     user_in: UserCreate,
     request: Request,
@@ -39,13 +43,18 @@ async def register(
             detail="邮箱已被注册"
         )
     
-    # 创建新用户
     user = crud_user.create(db, obj_in=user_in)
-    
-    # 记录审计日志
+
+    need_approval = settings.REQUIRE_REGISTRATION_APPROVAL
+    if need_approval:
+        user.is_active = False
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
     crud_audit.create_log(
         db,
-        actor_user_id=None,  # 注册时没有操作人
+        actor_user_id=None,
         target_user_id=user.id,
         action="user_register",
         app_id=None,
@@ -53,8 +62,23 @@ async def register(
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
         success=True,
-        details=f'{{"username": "{user.username}"}}'
+        details=f'{{"username": "{user.username}", "need_approval": {str(need_approval).lower()}}}'
     )
+
+    if need_approval:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=201,
+            content={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_active": user.is_active,
+                "roles": [],
+                "message": "注册成功，请等待管理员审核后方可登录"
+            }
+        )
     
     return user
 
@@ -104,6 +128,35 @@ async def read_user_me(
     获取当前用户信息
     """
     return current_user
+
+
+@router.post("/me/change-password", response_model=ChangePasswordResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """用户自助修改密码"""
+    from app.core.security import verify_password, get_password_hash
+    if not verify_password(body.old_password, current_user.hashed_password):
+        crud_audit.create_log(
+            db, actor_user_id=current_user.id, action="change_password",
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            success=False, details='{"reason":"old_password_wrong"}'
+        )
+        raise HTTPException(status_code=400, detail="旧密码不正确")
+    current_user.hashed_password = get_password_hash(body.new_password[:72])
+    db.add(current_user)
+    db.commit()
+    crud_audit.create_log(
+        db, actor_user_id=current_user.id, action="change_password",
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        success=True, details='{}'
+    )
+    return ChangePasswordResponse(message="密码修改成功")
 
 
 @router.get("/", response_model=List[UserResponse])
@@ -216,8 +269,13 @@ async def disable_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    ttl = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    for sess in db.query(SessionModel).filter(
+        SessionModel.user_id == user_id, SessionModel.revoked_at.is_(None)
+    ).all():
+        add_to_blacklist(sess.jti, ttl_seconds=ttl)
     
-    # 记录审计日志
     crud_audit.create_log(
         db,
         actor_user_id=current_user.id,

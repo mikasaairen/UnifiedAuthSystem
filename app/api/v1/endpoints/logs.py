@@ -116,6 +116,111 @@ async def get_log_stats(
     return stats
 
 
+@router.get("/login-trend")
+async def get_login_trend(
+    days: int = Query(7, ge=1, le=30),
+    current_user: User = Depends(require_permission("logs:view")),
+    db: Session = Depends(get_db)
+):
+    """近 N 天每日登录次数（成功 + 失败），用于折线图"""
+    from sqlalchemy import func, cast, Date
+    from app.models.audit import AuditLog
+    start = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(
+            cast(AuditLog.created_at, Date).label("day"),
+            AuditLog.success,
+            func.count(AuditLog.id).label("cnt"),
+        )
+        .filter(AuditLog.action == "login", AuditLog.created_at >= start)
+        .group_by("day", AuditLog.success)
+        .order_by("day")
+        .all()
+    )
+    date_map: dict = {}
+    for row in rows:
+        d = str(row.day)
+        if d not in date_map:
+            date_map[d] = {"date": d, "success": 0, "fail": 0}
+        if row.success:
+            date_map[d]["success"] = row.cnt
+        else:
+            date_map[d]["fail"] = row.cnt
+    # 按日期排序并补全缺失日期，避免前端图表错乱
+    result = []
+    for i in range(days):
+        d = (datetime.utcnow() - timedelta(days=days - 1 - i)).date()
+        key = str(d)
+        result.append(date_map.get(key, {"date": key, "success": 0, "fail": 0}))
+    return result
+
+
+@router.get("/action-distribution")
+async def get_action_distribution(
+    days: int = Query(7, ge=1, le=30),
+    current_user: User = Depends(require_permission("logs:view")),
+    db: Session = Depends(get_db)
+):
+    """近 N 天操作类型分布，用于饼图"""
+    from sqlalchemy import func
+    from app.models.audit import AuditLog
+    start = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(AuditLog.action, func.count(AuditLog.id).label("cnt"))
+        .filter(AuditLog.created_at >= start)
+        .group_by(AuditLog.action)
+        .all()
+    )
+    action_labels = {
+        "login": "登录", "logout": "登出", "refresh": "刷新令牌",
+        "user_register": "用户注册", "user_update": "用户更新",
+        "user_disable": "用户禁用", "user_enable": "用户启用",
+        "user_delete": "用户删除", "app_register": "应用注册",
+        "app_delete": "应用删除", "app_approve": "应用审核",
+        "app_disable": "应用禁用", "app_enable": "应用启用",
+        "check_permission": "权限检查", "introspect": "令牌内省",
+        "change_password": "修改密码", "account_locked": "账户锁定",
+        "security_alert": "安全告警",
+    }
+    return [
+        {"action": r.action, "label": action_labels.get(r.action, r.action), "count": r.cnt}
+        for r in rows
+    ]
+
+
+@router.get("/security-alerts")
+async def get_security_alerts(
+    days: int = Query(7, ge=1, le=30),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_permission("logs:view")),
+    db: Session = Depends(get_db)
+):
+    """近 N 天安全告警日志"""
+    from app.models.audit import AuditLog
+    start = datetime.utcnow() - timedelta(days=days)
+    alerts = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.action.in_(["security_alert", "account_locked"]),
+            AuditLog.created_at >= start,
+        )
+        .order_by(AuditLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": a.id,
+            "action": a.action,
+            "actor_user_id": a.actor_user_id,
+            "ip": a.ip,
+            "details": a.details,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in alerts
+    ]
+
+
 @router.get("/export")
 async def export_audit_logs(
     user_id: Optional[int] = Query(None),

@@ -12,10 +12,13 @@ if platform.system() == 'Windows':
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.cors import DynamicCORSMiddleware
 from app.api.v1.api import api_router
 
@@ -25,7 +28,9 @@ app = FastAPI(
     description="统一认证授权系统"
 )
 
-# 动态 CORS：配置中的来源 + 已审核通过应用的 callback_url 的 origin，审核通过后自动生效
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(DynamicCORSMiddleware)
 
 # 挂载路由（API 优先）
@@ -44,6 +49,22 @@ templates = Jinja2Templates(directory=_templates_dir)
 # 挂载静态资源：/static -> static/
 if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """启动时初始化定时任务"""
+    import threading
+    from app.core.token_blacklist import cleanup_expired
+    def _periodic_cleanup():
+        import time
+        while True:
+            time.sleep(300)
+            cleaned = cleanup_expired()
+            if cleaned:
+                print(f"[blacklist] 清理过期条目: {cleaned}")
+    t = threading.Thread(target=_periodic_cleanup, daemon=True)
+    t.start()
 
 
 @app.get("/health")

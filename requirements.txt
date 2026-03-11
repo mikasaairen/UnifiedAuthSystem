@@ -15,3 +15,6 @@ pymysql==1.1.0
 # 导出 CSV / 时间处理等
 python-dateutil==2.8.2
 
+# API 限流
+slowapi==0.1.9
+

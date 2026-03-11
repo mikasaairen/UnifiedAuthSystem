@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, F
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
+from app.core.rate_limit import limiter
 
 from app.core.config import settings
 from app.api.deps import SSO_COOKIE_NAME
@@ -19,6 +20,7 @@ from app.core.security import (
     verify_password
 )
 from app.core.auth_code_store import generate_authorization_code
+from app.core.token_blacklist import add_to_blacklist
 from app.api.deps import get_current_user, get_current_user_from_cookie_or_bearer, get_db
 from app.crud import crud_user, crud_session, crud_audit, crud_app
 from app.models.session import Session as SessionModel
@@ -36,6 +38,7 @@ def _redirect_uri_matches_app(redirect_uri: str, app_callback_url: Optional[str]
 
 
 @router.post("/login")
+@limiter.limit("10/minute")
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     client_id: Optional[str] = Form(None),
@@ -52,17 +55,19 @@ async def login(
             db, username=form_data.username, password=form_data.password
         )
         if not user:
-            # 记录审计：登录失败
+            maybe_user = crud_user.get_by_username(db, username=form_data.username)
+            just_locked = getattr(maybe_user, "_just_locked", False) if maybe_user else False
             crud_audit.create_log(
                 db,
-                actor_user_id=None,
-                action="login",
+                actor_user_id=maybe_user.id if maybe_user else None,
+                action="account_locked" if just_locked else "login",
                 app_id=None,
                 resource=None,
                 ip=request.client.host if request and request.client else None,
                 user_agent=request.headers.get("user-agent") if request else None,
                 success=False,
-                details='{"reason": "bad_credentials_or_locked"}',
+                details=f'{{"reason": "account_locked", "lock_minutes": {settings.LOGIN_LOCK_MINUTES}}}'
+                    if just_locked else '{"reason": "bad_credentials_or_locked"}',
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -101,18 +106,33 @@ async def login(
         db.add(session_obj)
         db.commit()
 
-        # 审计：登录成功
+        current_ip = request.client.host if request and request.client else None
+        ip_changed = (
+            user.last_login_ip
+            and current_ip
+            and user.last_login_ip != current_ip
+        )
+        login_details = '{"ip_anomaly": true, "prev_ip": "' + (user.last_login_ip or "") + '"}' if ip_changed else '{}'
         crud_audit.create_log(
             db,
             actor_user_id=user.id,
             action="login",
             app_id=None,
             resource=None,
-            ip=request.client.host if request and request.client else None,
+            ip=current_ip,
             user_agent=request.headers.get("user-agent") if request else None,
             success=True,
-            details='{}',
+            details=login_details,
         )
+        if ip_changed:
+            crud_audit.create_log(
+                db,
+                actor_user_id=user.id,
+                action="security_alert",
+                ip=current_ip,
+                success=True,
+                details=f'{{"type": "ip_change", "prev_ip": "{user.last_login_ip}", "new_ip": "{current_ip}"}}',
+            )
 
         # 单点登录：登录成功后统一设置 SSO Cookie，任意应用/管理端一次登录即可互通
         def _make_login_response(body: dict):
@@ -181,6 +201,7 @@ async def login(
 
 
 @router.post("/refresh", response_model=Token)
+@limiter.limit("20/minute")
 async def refresh_token(
     refresh_token: str,
     request: Request = None,
@@ -251,6 +272,7 @@ async def logout(
             payload = verify_token(token)
             jti = payload.get("jti")
             if jti:
+                add_to_blacklist(jti, ttl_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
                 sess = crud_session.crud_session.get_by_jti(db, jti=jti)
                 if sess and crud_session.crud_session.is_active(sess):
                     crud_session.crud_session.revoke(db, db_obj=sess)
@@ -388,6 +410,7 @@ async def create_authorization_code_for_logged_in_user(
 
 
 @router.post("/token", response_model=Token)
+@limiter.limit("20/minute")
 async def token(
     grant_type: str = Form(...),
     code: str = Form(None),
@@ -458,7 +481,9 @@ async def token(
 
 
 @router.post("/introspect")
+@limiter.limit("30/minute")
 async def introspect(
+    request: Request,
     token: str = Form(...),
     client_id: str = Form(..., description="应用ID，需配合 client_secret 完成应用身份校验"),
     client_secret: str = Form(..., description="应用密钥"),
@@ -474,13 +499,17 @@ async def introspect(
         raise HTTPException(status_code=401, detail="无效的客户端密钥")
     try:
         payload = verify_token(token)
+        from app.core.token_blacklist import is_blacklisted
+        jti = payload.get("jti")
+        if jti and is_blacklisted(jti):
+            return {"active": False}
         return {
             "active": True,
             "sub": payload.get("sub"),
-            "client_id": payload.get("sub"),  # 兼容旧字段
+            "client_id": payload.get("sub"),
             "exp": payload.get("exp"),
             "iat": payload.get("iat"),
-            "jti": payload.get("jti"),
+            "jti": jti,
             "iss": payload.get("iss"),
             "aud": payload.get("aud"),
         }
@@ -522,5 +551,6 @@ async def revoke_session(
     if not sess or sess.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在或无权操作")
     crud_session.revoke(db, db_obj=sess)
+    add_to_blacklist(jti, ttl_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     return {"message": "会话已撤销"}
 

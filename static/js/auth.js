@@ -72,17 +72,18 @@ document.addEventListener('DOMContentLoaded', function() {
             successDiv.textContent = '';
 
             try {
-                await API.post('/users/register', {
+                var res = await API.post('/users/register', {
                     username,
                     email,
                     password,
                     full_name: fullName
                 });
 
-                successDiv.textContent = '注册成功！请登录。';
+                var msg = (res && res.message) ? res.message : '注册成功！请登录。';
+                successDiv.textContent = msg;
                 setTimeout(() => {
                     window.location.href = '/login';
-                }, 2000);
+                }, 2500);
             } catch (error) {
                 errorDiv.textContent = error.message || '注册失败';
             }
@@ -93,7 +94,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
         logoutBtn.addEventListener('click', function() {
-            fetch('/api/v1/auth/clear-sso', { method: 'GET', credentials: 'include' })
+            var token = localStorage.getItem('access_token');
+            var headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+            fetch('/api/v1/auth/logout', { method: 'POST', headers: headers, credentials: 'include' })
                 .catch(function() {})
                 .finally(function() {
                     localStorage.removeItem('access_token');

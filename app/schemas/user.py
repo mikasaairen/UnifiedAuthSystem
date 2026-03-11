@@ -48,6 +48,30 @@ class UserUpdate(BaseModel):
         return v
 
 
+class ChangePasswordRequest(BaseModel):
+    """用户自助修改密码"""
+    old_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v):
+        if len(v) < 6:
+            raise ValueError("新密码长度不能少于6位")
+        if len(v) > 72:
+            raise ValueError("密码长度不能超过72字节")
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        if not (has_upper and has_lower and has_digit):
+            raise ValueError("密码需包含大写字母、小写字母和数字")
+        return v
+
+
+class ChangePasswordResponse(BaseModel):
+    message: str
+
+
 class UserRoleInfo(BaseModel):
     """用户关联角色的简要信息"""
     id: int

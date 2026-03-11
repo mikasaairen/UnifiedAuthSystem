@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     LOGIN_MAX_FAILS: int = 5
     LOGIN_LOCK_MINUTES: int = 15
     
+    # 注册审核：开启后新注册用户需管理员审核方可登录
+    REQUIRE_REGISTRATION_APPROVAL: bool = False
+
     # 超级管理员配置
     FIRST_SUPERUSER_USERNAME: str = "admin"
     FIRST_SUPERUSER_EMAIL: str = "admin@example.com"

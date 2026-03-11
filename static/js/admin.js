@@ -38,6 +38,11 @@ async function loadCurrentUser() {
         if (userInfoTopbar) {
             userInfoTopbar.innerHTML = `<strong>${currentUser.full_name || currentUser.username}</strong><span class="topbar-role">${roleDisplayName(currentUser)}</span>`;
         }
+        const profileBtn = document.getElementById('profileTopbarBtn');
+        if (profileBtn && !profileBtn._bound) {
+            profileBtn._bound = true;
+            profileBtn.addEventListener('click', openProfileModal);
+        }
 
         // 拉取当前用户权限列表，用于控制导航可见性（仅按角色权限，不再使用 is_admin）
         try {
@@ -58,12 +63,12 @@ async function loadCurrentUser() {
 }
 
 function applyNavVisibility() {
-    // 工作台、概览：所有登录用户可见
     const map = {
         users: 'users:manage',
         roles: 'rbac:manage',
         apps: 'apps:manage',
         logs: 'logs:view',
+        system: 'users:manage',
     };
     Object.keys(map).forEach(function(page) {
         const items = document.querySelectorAll('.nav-item[data-page="' + page + '"]');
@@ -99,7 +104,8 @@ function switchPage(pageName) {
         'users': '用户管理',
         'roles': '角色权限管理',
         'apps': '应用管理',
-        'logs': '审计日志'
+        'logs': '审计日志',
+        'system': '系统设置'
     };
     const titleEl = document.getElementById('pageTitle');
     if (titleEl) titleEl.textContent = titles[pageName] || '概览';
@@ -126,6 +132,9 @@ function switchPage(pageName) {
             break;
         case 'logs':
             loadLogs();
+            break;
+        case 'system':
+            loadSystemSettings();
             break;
     }
 }
@@ -166,6 +175,9 @@ function escapeHtml(s) {
     return div.innerHTML;
 }
 
+let loginTrendChartInstance = null;
+let actionPieChartInstance = null;
+
 async function loadOverview() {
     var codes = myPermissionCodes || [];
     var grid = document.getElementById('overviewStatsGrid');
@@ -175,6 +187,12 @@ async function loadOverview() {
             card.style.display = (perm && codes.indexOf(perm) !== -1) ? '' : 'none';
         });
     }
+    document.querySelectorAll('[data-permission]').forEach(function(el) {
+        if (el.closest('#overviewStatsGrid')) return;
+        var perm = el.getAttribute('data-permission');
+        el.style.display = (perm && codes.indexOf(perm) !== -1) ? '' : 'none';
+    });
+
     async function fetchUsers() {
         if (codes.indexOf('users:manage') === -1) return;
         var users = await API.get('/users/');
@@ -204,12 +222,121 @@ async function loadOverview() {
             el.textContent = todayLogs.length;
         }
     }
+
     var promises = [fetchUsers(), fetchApps(), fetchRoles(), fetchLogs()];
+
+    if (codes.indexOf('logs:view') !== -1) {
+        var chartsRow = document.getElementById('overviewChartsRow');
+        if (chartsRow && chartsRow.style.display !== 'none') {
+            promises.push(loadLoginTrendChart());
+            promises.push(loadActionPieChart());
+        }
+    }
+    if (codes.indexOf('users:manage') !== -1) {
+        promises.push(loadSecurityOverview());
+    }
+
     try {
         await Promise.allSettled(promises);
     } catch (e) {
         console.error('加载概览数据失败:', e);
     }
+}
+
+async function loadLoginTrendChart() {
+    try {
+        var data = await API.get('/logs/login-trend?days=7');
+        var canvas = document.getElementById('loginTrendChart');
+        if (!canvas) return;
+        var sorted = (data || []).slice().sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+        var labels = sorted.map(function(d) { return d.date; });
+        var success = sorted.map(function(d) { return d.success || 0; });
+        var fail = sorted.map(function(d) { return d.fail || 0; });
+        if (loginTrendChartInstance) {
+            loginTrendChartInstance.destroy();
+            loginTrendChartInstance = null;
+        }
+        requestAnimationFrame(function() {
+            if (!document.getElementById('loginTrendChart')) return;
+            loginTrendChartInstance = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: '登录成功', data: success, borderColor: '#52c41a', backgroundColor: 'rgba(82,196,26,0.1)', tension: 0.3, fill: true },
+                        { label: '登录失败', data: fail, borderColor: '#ff4d4f', backgroundColor: 'rgba(255,77,79,0.1)', tension: 0.3, fill: true }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: { top: 8, bottom: 8 } },
+                    plugins: { legend: { position: 'bottom' } },
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 }, min: 0 } }
+                }
+            });
+        });
+    } catch (e) { console.error('加载登录趋势失败:', e); }
+}
+
+async function loadActionPieChart() {
+    try {
+        var data = await API.get('/logs/action-distribution?days=7');
+        var canvas = document.getElementById('actionPieChart');
+        if (!canvas) return;
+        var labels = (data || []).map(function(d) { return d.label; });
+        var counts = (data || []).map(function(d) { return d.count || 0; });
+        if (actionPieChartInstance) {
+            actionPieChartInstance.destroy();
+            actionPieChartInstance = null;
+        }
+        var colors = ['#1890ff','#52c41a','#faad14','#ff4d4f','#722ed1','#13c2c2','#eb2f96','#fa8c16','#a0d911','#2f54eb','#36cfc9','#f759ab','#597ef7','#9254de','#ffc53d'];
+        requestAnimationFrame(function() {
+            if (!document.getElementById('actionPieChart')) return;
+            actionPieChartInstance = new Chart(canvas, {
+                type: 'doughnut',
+                data: { labels: labels, datasets: [{ data: counts, backgroundColor: colors.slice(0, labels.length) }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: 8 },
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10 } } }
+                }
+            });
+        });
+    } catch (e) { console.error('加载操作分布失败:', e); }
+}
+
+async function loadSecurityOverview() {
+    try {
+        var [overview, alerts] = await Promise.all([
+            API.get('/system/security-overview'),
+            API.get('/logs/security-alerts?days=7&limit=10')
+        ]);
+        var statsEl = document.getElementById('securityStatsContent');
+        if (statsEl) {
+            statsEl.innerHTML = `
+                <div class="security-stat-row">
+                    <span class="security-stat-item"><strong>${overview.token_blacklist_size}</strong> Token黑名单</span>
+                    <span class="security-stat-item"><strong>${overview.locked_accounts}</strong> 锁定账户</span>
+                    <span class="security-stat-item"><strong>${overview.pending_users}</strong> 待审核用户</span>
+                    <span class="security-stat-item"><strong>${overview.recent_alerts}</strong> 近7天告警</span>
+                </div>`;
+        }
+        var listEl = document.getElementById('securityAlertsList');
+        if (listEl) {
+            if (!alerts || alerts.length === 0) {
+                listEl.innerHTML = '<p class="form-hint">近7天无安全告警</p>';
+            } else {
+                listEl.innerHTML = alerts.map(function(a) {
+                    var typeLabel = a.action === 'account_locked' ? '账户锁定' : '安全告警';
+                    var detail = '';
+                    try { var d = JSON.parse(a.details || '{}'); detail = d.type === 'ip_change' ? '异地登录 ' + (d.prev_ip||'') + ' → ' + (d.new_ip||'') : (d.reason || ''); } catch(e) {}
+                    return '<div class="alert-item"><span class="badge badge-danger">' + typeLabel + '</span> 用户ID:' + (a.actor_user_id||'-') + ' IP:' + (a.ip||'-') + ' ' + detail + ' <small>' + formatBeijingTime(a.created_at) + '</small></div>';
+                }).join('');
+            }
+        }
+    } catch (e) { console.error('加载安全概览失败:', e); }
 }
 
 // ========== 用户管理 ==========
@@ -1259,7 +1386,8 @@ const LOG_ACTION_LABELS = {
     user_register: '用户注册', user_update: '用户更新', user_disable: '用户禁用',
     user_enable: '用户启用', user_delete: '用户删除',
     app_register: '应用注册', app_delete: '应用删除', app_approve: '应用审核', app_disable: '应用禁用', app_enable: '应用启用',
-    check_permission: '权限检查', introspect: '令牌内省'
+    check_permission: '权限检查', introspect: '令牌内省',
+    change_password: '修改密码', account_locked: '账户锁定', security_alert: '安全告警'
 };
 
 function formatLogDetails(details) {
@@ -1356,6 +1484,176 @@ async function exportLogs() {
         showMessage('日志导出成功', 'success');
     } catch (error) {
         showMessage('导出失败: ' + (error.message || '未知错误'), 'error');
+    }
+}
+
+// ========== 个人中心（右上角弹窗） ==========
+async function openProfileModal() {
+    if (!currentUser) return;
+    var sessions = [];
+    try {
+        sessions = await API.get('/auth/sessions/me');
+    } catch (e) { sessions = []; }
+    var roles = (currentUser.roles || []).map(function(r) { return r.name; }).join('、') || '无角色';
+    var infoHtml = `
+        <div class="profile-field"><label>用户名</label><span>${escapeHtml(currentUser.username)}</span></div>
+        <div class="profile-field"><label>邮箱</label><span>${escapeHtml(currentUser.email)}</span></div>
+        <div class="profile-field"><label>姓名</label><span>${escapeHtml(currentUser.full_name || '-')}</span></div>
+        <div class="profile-field"><label>角色</label><span>${escapeHtml(roles)}</span></div>
+        <div class="profile-field"><label>状态</label><span class="badge ${currentUser.is_active ? 'badge-success' : 'badge-danger'}">${currentUser.is_active ? '已激活' : '未激活'}</span></div>
+    `;
+    var sessionsRows = !sessions || sessions.length === 0
+        ? '<tr><td colspan="7">暂无会话</td></tr>'
+        : sessions.map(function(s) {
+            var statusBadge = s.active ? '<span class="badge badge-success">活跃</span>' : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
+            var revokeBtn = s.active ? '<button type="button" class="btn btn-sm btn-danger" onclick="revokeSessionInModal(\'' + escapeHtml(s.jti) + '\')">撤销</button>' : '-';
+            return '<tr><td title="' + escapeHtml(s.jti) + '">' + (s.jti ? s.jti.substring(0, 12) + '...' : '-') + '</td><td>' + escapeHtml(s.ip || '-') + '</td><td title="' + escapeHtml(s.user_agent || '') + '">' + (s.user_agent ? s.user_agent.substring(0, 30) + '...' : '-') + '</td><td>' + formatBeijingTime(s.created_at) + '</td><td>' + formatBeijingTime(s.expires_at) + '</td><td>' + statusBadge + '</td><td>' + revokeBtn + '</td></tr>';
+        }).join('');
+    var content = `
+        <div class="profile-modal-sections">
+            <div class="profile-section profile-section-inline">
+                <h4>基本信息</h4>
+                <div class="profile-info">${infoHtml}</div>
+            </div>
+            <div class="profile-section profile-section-inline">
+                <h4>修改密码</h4>
+                <form id="profileChangePasswordForm" class="profile-form">
+                    <div class="form-group">
+                        <label>旧密码</label>
+                        <input type="password" name="old_password" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label>新密码</label>
+                        <input type="password" name="new_password" required autocomplete="new-password">
+                        <small class="form-hint">至少6位，需包含大写、小写字母和数字</small>
+                    </div>
+                    <div class="form-group">
+                        <label>确认新密码</label>
+                        <input type="password" name="confirm_password" required autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">修改密码</button>
+                </form>
+            </div>
+            <div class="profile-section profile-section-inline">
+                <h4>活跃会话</h4>
+                <p class="form-hint">可撤销不信任的会话。</p>
+                <div class="table-container table-container-scroll">
+                    <table class="data-table">
+                        <thead><tr><th>会话ID</th><th>IP</th><th>浏览器</th><th>创建时间</th><th>过期时间</th><th>状态</th><th>操作</th></tr></thead>
+                        <tbody id="profileModalSessionsBody">${sessionsRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+    showModal('个人中心', content, async function(form) {
+        if (form.id !== 'profileChangePasswordForm') return;
+        var fd = new FormData(form);
+        var newPwd = fd.get('new_password');
+        var confirmPwd = fd.get('confirm_password');
+        if (newPwd !== confirmPwd) {
+            showMessage('两次输入的新密码不一致', 'error');
+            return;
+        }
+        var res = await API.post('/users/me/change-password', {
+            old_password: fd.get('old_password'),
+            new_password: newPwd
+        });
+        showMessage(res.message || '密码修改成功', 'success');
+        form.reset();
+    });
+}
+
+async function revokeSessionInModal(jti) {
+    if (!jti || !confirm('确定要撤销该会话吗？')) return;
+    try {
+        await API.request('/auth/sessions/me?jti=' + encodeURIComponent(jti), { method: 'DELETE' });
+        showMessage('会话已撤销', 'success');
+        var tbody = document.getElementById('profileModalSessionsBody');
+        if (tbody) {
+            var sessions = await API.get('/auth/sessions/me');
+            if (!sessions || sessions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7">暂无会话</td></tr>';
+            } else {
+                tbody.innerHTML = sessions.map(function(s) {
+                    var statusBadge = s.active ? '<span class="badge badge-success">活跃</span>' : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
+                    var revokeBtn = s.active ? '<button type="button" class="btn btn-sm btn-danger" onclick="revokeSessionInModal(\'' + escapeHtml(s.jti) + '\')">撤销</button>' : '-';
+                    return '<tr><td title="' + escapeHtml(s.jti) + '">' + (s.jti ? s.jti.substring(0, 12) + '...' : '-') + '</td><td>' + escapeHtml(s.ip || '-') + '</td><td title="' + escapeHtml(s.user_agent || '') + '">' + (s.user_agent ? s.user_agent.substring(0, 30) + '...' : '-') + '</td><td>' + formatBeijingTime(s.created_at) + '</td><td>' + formatBeijingTime(s.expires_at) + '</td><td>' + statusBadge + '</td><td>' + revokeBtn + '</td></tr>';
+                }).join('');
+            }
+        }
+    } catch (e) {
+        showMessage('操作失败: ' + (e.message || ''), 'error');
+    }
+}
+
+async function loadMySessions() {
+    var tbody = document.getElementById('sessionsTableBody');
+    if (!tbody) return;
+    try {
+        var sessions = await API.get('/auth/sessions/me');
+        if (!sessions || sessions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7">暂无会话</td></tr>';
+            return;
+        }
+        tbody.innerHTML = sessions.map(function(s) {
+            var statusBadge = s.active
+                ? '<span class="badge badge-success">活跃</span>'
+                : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
+            return '<tr>' +
+                '<td title="' + s.jti + '">' + (s.jti ? s.jti.substring(0, 12) + '...' : '-') + '</td>' +
+                '<td>' + (s.ip || '-') + '</td>' +
+                '<td title="' + (s.user_agent || '') + '">' + (s.user_agent ? s.user_agent.substring(0, 40) + '...' : '-') + '</td>' +
+                '<td>' + formatBeijingTime(s.created_at) + '</td>' +
+                '<td>' + formatBeijingTime(s.expires_at) + '</td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td>' + (s.active ? '<button class="btn btn-sm btn-danger" onclick="revokeSession(\'' + s.jti + '\')">撤销</button>' : '-') + '</td>' +
+                '</tr>';
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="7">加载失败</td></tr>';
+    }
+}
+
+async function revokeSession(jti) {
+    if (!confirm('确定要撤销该会话吗？')) return;
+    try {
+        await API.request('/auth/sessions/me?jti=' + encodeURIComponent(jti), { method: 'DELETE' });
+        showMessage('会话已撤销', 'success');
+        loadMySessions();
+    } catch (e) {
+        showMessage('操作失败: ' + (e.message || ''), 'error');
+    }
+}
+
+// ========== 系统设置 ==========
+async function loadSystemSettings() {
+    try {
+        var settings = await API.get('/system/settings');
+        var checkbox = document.getElementById('toggleApproval');
+        var status = document.getElementById('approvalStatus');
+        if (checkbox) checkbox.checked = settings.require_registration_approval;
+        if (status) status.textContent = settings.require_registration_approval ? '已开启' : '已关闭';
+
+        var secOverview = await API.get('/system/security-overview');
+        var blEl = document.getElementById('blacklistSize');
+        if (blEl) blEl.textContent = secOverview.token_blacklist_size;
+    } catch (e) {
+        console.error('加载系统设置失败:', e);
+    }
+}
+
+async function toggleRegistrationApproval(checkbox) {
+    try {
+        var res = await API.put('/system/settings', {
+            require_registration_approval: checkbox.checked
+        });
+        var status = document.getElementById('approvalStatus');
+        if (status) status.textContent = res.require_registration_approval ? '已开启' : '已关闭';
+        showMessage('设置已更新', 'success');
+    } catch (e) {
+        checkbox.checked = !checkbox.checked;
+        showMessage('更新失败: ' + (e.message || ''), 'error');
     }
 }
 

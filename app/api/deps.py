@@ -9,6 +9,7 @@ from jose import JWTError
 
 from app.core.config import settings
 from app.core.security import verify_token
+from app.core.token_blacklist import is_blacklisted
 from app.db.session import SessionLocal
 from app.crud import crud_user
 from app.models.user import User
@@ -50,6 +51,9 @@ async def get_current_user_from_cookie_or_bearer(
         username: str = payload.get("sub")
         if not username:
             return None
+        jti = payload.get("jti")
+        if jti and is_blacklisted(jti):
+            return None
         user = crud_user.get_by_username(db, username=username)
         if user is None or not user.is_active:
             return None
@@ -76,8 +80,10 @@ async def get_current_user(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
+        jti = payload.get("jti")
+        if jti and is_blacklisted(jti):
+            raise credentials_exception
     except (JWTError, ValueError):
-        # ValueError: verify_token 在令牌无效/过期时抛出
         raise credentials_exception
     
     user = crud_user.get_by_username(db, username=username)
