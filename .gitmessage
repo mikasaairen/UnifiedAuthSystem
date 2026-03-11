@@ -1,0 +1,7 @@
+# 请按下面格式填写提交信息（首行 50 字以内）
+# <type>(<scope>): <subject>
+#
+# type: feat/fix/docs/style/refactor/test/chore
+# scope: 可选，如 auth、rbac、api、frontend
+#
+# 示例: feat(rbac): 角色分配界面优化

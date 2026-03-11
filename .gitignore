@@ -7,16 +7,40 @@ __pycache__/
 .venv/
 venv/
 env/
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
 # 环境与配置
 .env
 .env.local
 *.local
+*.pem
+secrets/
 
 # IDE
 .idea/
 *.iml
+.vscode/
 
 # 日志与临时
 *.log
 *.tmp
+*.swp
+*~
+
+# 系统与数据库
+.DS_Store
+Thumbs.db
+*.db
+*.sqlite3
+data/
