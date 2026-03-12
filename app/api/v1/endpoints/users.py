@@ -1,8 +1,9 @@
 """
 用户管理接口：注册、查询、修改、禁用等
 """
+from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Body
 from sqlalchemy.orm import Session
 from app.core.rate_limit import limiter
 
@@ -10,9 +11,35 @@ from app.api.deps import get_current_active_user, get_db, require_permission
 from app.core.token_blacklist import add_to_blacklist
 from app.core.config import settings
 from app.crud import crud_user, crud_audit
-from app.schemas.user import UserCreate, UserCreateByAdmin, UserUpdate, UserResponse, UserBatchDeleteRequest, ChangePasswordRequest, ChangePasswordResponse
+from app.schemas.user import (
+    UserCreate, UserCreateByAdmin, UserUpdate, UserResponse,
+    UserBatchDeleteRequest, ChangePasswordRequest, ChangePasswordResponse,
+    DisableUserRequest,
+)
 from app.models.user import User
 from app.models.session import Session as SessionModel
+
+
+def _parse_disable_duration(body: DisableUserRequest) -> Optional[timedelta]:
+    """解析禁用时长，返回 timedelta；永久禁用返回 None（由 is_active=False 表示）。"""
+    if body.custom_minutes is not None and body.custom_minutes > 0:
+        return timedelta(minutes=min(body.custom_minutes, 60 * 24 * 365 * 10))  # 最多约10年
+    d = (body.duration or "").strip().lower()
+    if d in ("", "permanent", "永久"):
+        return None
+    if d == "15m":
+        return timedelta(minutes=15)
+    if d == "1h":
+        return timedelta(hours=1)
+    if d == "1d":
+        return timedelta(days=1)
+    if d == "7d":
+        return timedelta(days=7)
+    if d == "1month":
+        return timedelta(days=30)
+    if d == "1year":
+        return timedelta(days=365)
+    return None
 
 router = APIRouter()
 
@@ -253,10 +280,12 @@ async def disable_user(
     user_id: int,
     request: Request,
     current_user: User = Depends(require_permission("users:manage")),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    body: DisableUserRequest = Body(default=DisableUserRequest()),
 ):
     """
-    禁用用户（管理员专用）
+    禁用用户（管理员专用）。支持按时长禁用或永久禁用。
+    duration: 15m, 1h, 1d, 7d, 1month, 1year, permanent；或 custom_minutes 自定义分钟。
     """
     user = crud_user.get(db, id=user_id)
     if not user:
@@ -264,8 +293,17 @@ async def disable_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="用户不存在"
         )
-    
-    user.is_active = False
+
+    delta = _parse_disable_duration(body)
+    if delta is None:
+        user.is_active = False
+        user.locked_until = None
+        detail_json = f'{{"user_id": {user_id}, "type": "permanent"}}'
+    else:
+        user.locked_until = datetime.utcnow() + delta
+        user.is_active = True
+        detail_json = f'{{"user_id": {user_id}, "locked_until": "{user.locked_until.isoformat()}", "minutes": {int(delta.total_seconds() // 60)}}}'
+
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -275,7 +313,7 @@ async def disable_user(
         SessionModel.user_id == user_id, SessionModel.revoked_at.is_(None)
     ).all():
         add_to_blacklist(sess.jti, ttl_seconds=ttl)
-    
+
     crud_audit.create_log(
         db,
         actor_user_id=current_user.id,
@@ -286,9 +324,9 @@ async def disable_user(
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
         success=True,
-        details=f'{{"user_id": {user_id}}}'
+        details=detail_json
     )
-    
+
     return user
 
 
@@ -300,7 +338,7 @@ async def enable_user(
     db: Session = Depends(get_db)
 ):
     """
-    启用用户（管理员专用）
+    启用/解封用户（管理员专用）。清除锁定并设为激活。
     """
     user = crud_user.get(db, id=user_id)
     if not user:
@@ -308,13 +346,14 @@ async def enable_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="用户不存在"
         )
-    
+
     user.is_active = True
+    user.locked_until = None
+    user.failed_login_attempts = 0
     db.add(user)
     db.commit()
     db.refresh(user)
-    
-    # 记录审计日志
+
     crud_audit.create_log(
         db,
         actor_user_id=current_user.id,

@@ -21,7 +21,7 @@ from app.core.security import (
 )
 from app.core.auth_code_store import generate_authorization_code
 from app.core.token_blacklist import add_to_blacklist
-from app.api.deps import get_current_user, get_current_user_from_cookie_or_bearer, get_db
+from app.api.deps import get_current_user, get_current_user_from_cookie_or_bearer, get_db, oauth2_scheme
 from app.crud import crud_user, crud_session, crud_audit, crud_app
 from app.models.session import Session as SessionModel
 from app.schemas.token import Token
@@ -69,6 +69,20 @@ async def login(
                 details=f'{{"reason": "account_locked", "lock_minutes": {settings.LOGIN_LOCK_MINUTES}}}'
                     if just_locked else '{"reason": "bad_credentials_or_locked"}',
             )
+            if maybe_user and not maybe_user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="账户已禁用，请联系管理员解封",
+                )
+            if maybe_user and maybe_user.locked_until and maybe_user.locked_until > datetime.utcnow():
+                delta = maybe_user.locked_until - datetime.utcnow()
+                remaining = max(0, int(delta.total_seconds()))
+                mins, secs = remaining // 60, remaining % 60
+                msg = f"账户已禁用，剩余 {mins} 分 {secs} 秒后可重试"
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=msg,
+                )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="用户名或密码错误",
@@ -533,7 +547,7 @@ async def list_my_sessions(
             "expires_at": s.expires_at.isoformat() if s.expires_at else None,
             "revoked": s.revoked_at is not None,
             "ip": s.ip,
-            "user_agent": (s.user_agent[:80] + "…") if s.user_agent and len(s.user_agent) > 80 else s.user_agent,
+            "user_agent": s.user_agent or "",
             "active": s.revoked_at is None and (s.expires_at and s.expires_at > now),
         }
         for s in sessions
@@ -553,4 +567,35 @@ async def revoke_session(
     crud_session.revoke(db, db_obj=sess)
     add_to_blacklist(jti, ttl_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     return {"message": "会话已撤销"}
+
+
+@router.post("/sessions/me/revoke-others")
+async def revoke_other_sessions(
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """一键撤销除当前设备外的所有会话；当前请求的 token 对应会话保留。"""
+    try:
+        payload = verify_token(token)
+        current_jti = payload.get("jti")
+    except (ValueError, Exception):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的令牌")
+    if not current_jti:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无法识别当前会话")
+    ttl = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    sessions = crud_session.get_by_user_id(db, user_id=current_user.id)
+    now = datetime.utcnow()
+    revoked_count = 0
+    for s in sessions:
+        if s.jti == current_jti:
+            continue
+        if s.revoked_at is not None:
+            continue
+        if not s.expires_at or s.expires_at <= now:
+            continue
+        crud_session.revoke(db, db_obj=s)
+        add_to_blacklist(s.jti, ttl_seconds=ttl)
+        revoked_count += 1
+    return {"message": "已退出其它设备", "revoked_count": revoked_count}
 

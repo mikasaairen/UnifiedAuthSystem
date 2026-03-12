@@ -371,6 +371,15 @@ button[type="submit"]:hover, .btn-primary:hover { background: #66b1ff; }
     max-height: 200px;
     overflow: auto;
 }
+.session-row-current {
+    background-color: #e6f7ff !important;
+}
+.badge-current-device {
+    background-color: #52c41a;
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 6px;
+}
 .modal:has(.profile-modal-sections) {
     max-width: 560px;
     width: 95%;

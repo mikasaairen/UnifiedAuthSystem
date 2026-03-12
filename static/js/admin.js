@@ -175,6 +175,31 @@ function escapeHtml(s) {
     return div.innerHTML;
 }
 
+function formatUserStatus(user) {
+    if (!user) return '';
+    var lockedUntil = user.locked_until ? parseUtcIso(user.locked_until) : null;
+    if (!user.is_active) return { text: '永久禁用', badge: 'badge-danger' };
+    if (lockedUntil && lockedUntil.getTime() > Date.now()) {
+        var sec = Math.max(0, Math.floor((lockedUntil.getTime() - Date.now()) / 1000));
+        var m = Math.floor(sec / 60);
+        var h = Math.floor(m / 60);
+        var d = Math.floor(h / 24);
+        if (d > 0) return { text: '已禁用 (剩余 ' + d + ' 天)', badge: 'badge-danger' };
+        if (h > 0) return { text: '已禁用 (剩余 ' + h + ' 小时)', badge: 'badge-danger' };
+        if (m > 0) return { text: '已禁用 (剩余 ' + m + ' 分钟)', badge: 'badge-danger' };
+        return { text: '已禁用 (剩余 ' + sec + ' 秒)', badge: 'badge-danger' };
+    }
+    if (user.locked_until != null && user.locked_until !== '') return { text: '已激活（可解封清除）', badge: 'badge-success' };
+    return { text: '已激活', badge: 'badge-success' };
+}
+
+function isUserLocked(user) {
+    if (!user) return false;
+    if (!user.is_active) return true;
+    if (user.locked_until != null && user.locked_until !== '') return true;
+    return false;
+}
+
 let loginTrendChartInstance = null;
 let actionPieChartInstance = null;
 
@@ -286,6 +311,7 @@ async function loadActionPieChart() {
         if (!canvas) return;
         var labels = (data || []).map(function(d) { return d.label; });
         var counts = (data || []).map(function(d) { return d.count || 0; });
+        var total = counts.reduce(function(sum, v) { return sum + (v || 0); }, 0) || 1;
         if (actionPieChartInstance) {
             actionPieChartInstance.destroy();
             actionPieChartInstance = null;
@@ -300,7 +326,21 @@ async function loadActionPieChart() {
                     responsive: true,
                     maintainAspectRatio: false,
                     layout: { padding: 8 },
-                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10 } } }
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10 } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    var label = context.label || '';
+                                    var value = context.parsed || 0;
+                                    var dataArr = context.chart.data.datasets[0].data || [];
+                                    var sum = dataArr.reduce(function(s, v) { return s + (v || 0); }, 0) || 1;
+                                    var pct = ((value / sum) * 100).toFixed(1);
+                                    return label + ': ' + value + ' (' + pct + '%)';
+                                }
+                            }
+                        }
+                    }
                 }
             });
         });
@@ -364,25 +404,23 @@ async function loadUsers() {
             return;
         }
         document.getElementById('usersSelectAll').checked = false;
-        tbody.innerHTML = users.map(user => `
-            <tr>
-                <td><input type="checkbox" class="user-row-cb" value="${user.id}" aria-label="选择"></td>
-                <td>${user.id}</td>
-                <td>${user.username}</td>
-                <td>${user.email}</td>
-                <td>${user.full_name || '-'}</td>
-                <td><span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">${user.is_active ? '已激活' : '已禁用'}</span></td>
-                <td>${(user.roles && user.roles.length) ? user.roles.map(r => r.name).join('、') : '无角色'}</td>
-                <td>
-                    <button class="btn btn-sm btn-primary" onclick="editUser(${user.id})">编辑</button>
-                    ${user.is_active ?
-                        `<button class="btn btn-sm btn-warning" onclick="disableUser(${user.id})">禁用</button>` :
-                        `<button class="btn btn-sm btn-success" onclick="enableUser(${user.id})">启用</button>`
-                    }
-                    <button class="btn btn-sm btn-danger" onclick="deleteUser(${user.id})">删除</button>
-                </td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = users.map(user => {
+            var status = formatUserStatus(user);
+            var locked = isUserLocked(user);
+            var op = locked
+                ? '<button class="btn btn-sm btn-success" onclick="enableUser(' + user.id + ')">解封</button>'
+                : '<button class="btn btn-sm btn-warning" onclick="showDisableUserModal(' + user.id + ')">禁用</button>';
+            return '<tr>' +
+                '<td><input type="checkbox" class="user-row-cb" value="' + user.id + '" aria-label="选择"></td>' +
+                '<td>' + user.id + '</td>' +
+                '<td>' + escapeHtml(user.username) + '</td>' +
+                '<td>' + escapeHtml(user.email) + '</td>' +
+                '<td>' + escapeHtml(user.full_name || '-') + '</td>' +
+                '<td><span class="badge ' + status.badge + '">' + escapeHtml(status.text) + '</span></td>' +
+                '<td>' + (user.roles && user.roles.length ? user.roles.map(function(r){ return r.name; }).join('、') : '无角色') + '</td>' +
+                '<td><button class="btn btn-sm btn-primary" onclick="editUser(' + user.id + ')">编辑</button> ' + op + ' <button class="btn btn-sm btn-danger" onclick="deleteUser(' + user.id + ')">删除</button></td>' +
+                '</tr>';
+        }).join('');
     } catch (error) {
         console.error('加载用户列表失败:', error);
         if (feedbackEl) feedbackEl.textContent = '加载失败';
@@ -466,12 +504,70 @@ async function showCreateUserModal() {
     });
 }
 
-async function disableUser(userId) {
-    if (!confirm('确定要禁用该用户吗？')) return;
-    try {
-        await API.post(`/users/${userId}/disable`);
+var DISABLE_DURATIONS = [
+    { value: '15m', label: '15 分钟' },
+    { value: '1h', label: '1 小时' },
+    { value: '1d', label: '1 天' },
+    { value: '7d', label: '7 天' },
+    { value: '1month', label: '1 个月' },
+    { value: '1year', label: '1 年' },
+    { value: 'permanent', label: '永久禁用' }
+];
+
+function showDisableUserModal(userId) {
+    var options = DISABLE_DURATIONS.map(function(d) {
+        return '<option value="' + d.value + '">' + d.label + '</option>';
+    }).join('');
+    showModal('禁用用户', `
+        <form id="disableUserForm">
+            <input type="hidden" name="user_id" value="${userId}">
+            <div class="form-group">
+                <label>禁用时长</label>
+                <select name="duration" id="disableDurationSelect" onchange="toggleDisableCustom(this)">
+                    ${options}
+                </select>
+            </div>
+            <div class="form-group" id="disableCustomGroup" style="display:none">
+                <label>自定义时长（分钟）</label>
+                <input type="number" name="custom_minutes" id="disableCustomMinutes" min="1" placeholder="例如 120">
+            </div>
+            <div class="modal-actions">
+                <button type="submit" class="btn btn-primary">确定禁用</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+            </div>
+        </form>
+    `, async function(form) {
+        var duration = form.querySelector('[name="duration"]').value;
+        var customEl = form.querySelector('#disableCustomMinutes');
+        var body = {};
+        if (form.querySelector('#disableCustomGroup').style.display !== 'none' && customEl && customEl.value) {
+            var m = parseInt(customEl.value, 10);
+            if (m > 0) body.custom_minutes = m;
+        }
+        if (!body.custom_minutes) body.duration = duration;
+        await API.post('/users/' + userId + '/disable', body);
+        closeModal();
         loadUsers();
         showMessage('用户已禁用', 'success');
+    });
+    window.toggleDisableCustom = function(sel) {
+        var show = sel.value === 'custom';
+        document.getElementById('disableCustomGroup').style.display = show ? '' : 'none';
+    };
+    var sel = document.getElementById('disableDurationSelect');
+    if (sel) {
+        var opt = document.createElement('option');
+        opt.value = 'custom';
+        opt.textContent = '自定义时长';
+        sel.appendChild(opt);
+    }
+}
+
+async function enableUser(userId) {
+    try {
+        await API.post('/users/' + userId + '/enable');
+        loadUsers();
+        showMessage('已解封 / 已启用', 'success');
     } catch (error) {
         showMessage('操作失败: ' + error.message, 'error');
     }
@@ -1397,16 +1493,18 @@ function formatLogDetails(details) {
     return s.slice(0, 57).replace(/"/g, "'") + '…';
 }
 
+function parseUtcIso(dateString) {
+    if (!dateString) return null;
+    var s = String(dateString).trim();
+    if (!s.endsWith('Z') && !/[\+\-]\d{2}:?\d{2}$/.test(s)) s = s + 'Z';
+    var d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+}
+
 function formatBeijingTime(dateString) {
-    if (!dateString) return '-';
-    //时区后缀，补 Z 让 JS 正确按 UTC 解析，再转为北京时间显示
-    let s = String(dateString).trim();
-    if (!s.endsWith('Z') && !/[\+\-]\d{2}:?\d{2}$/.test(s)) {
-        s = s + 'Z';
-    }
-    const date = new Date(s);
-    if (isNaN(date.getTime())) return dateString;
-    return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    var d = parseUtcIso(dateString);
+    if (!d) return dateString ? String(dateString) : '-';
+    return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 }
 
 async function loadLogs() {
@@ -1488,12 +1586,58 @@ async function exportLogs() {
 }
 
 // ========== 个人中心（右上角弹窗） ==========
+function getCurrentJti() {
+    try {
+        var token = localStorage.getItem('access_token');
+        if (!token) return null;
+        var parts = token.split('.');
+        if (parts.length !== 3) return null;
+        var payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        var pad = payload.length % 4;
+        if (pad) payload += new Array(5 - pad).join('=');
+        var json = decodeURIComponent(atob(payload).split('').map(function(c) { return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); }).join(''));
+        var data = JSON.parse(json);
+        return data.jti || null;
+    } catch (e) { return null; }
+}
+
+function parseUserAgent(ua) {
+    if (!ua || typeof ua !== 'string') return '未知设备';
+    var u = ua;
+    var os = '未知';
+    if (/Windows/.test(u)) os = 'Windows';
+    else if (/Android/.test(u)) os = 'Android';
+    else if (/iPhone|iPad/.test(u)) os = /iPad/.test(u) ? 'iPad' : 'iPhone';
+    else if (/Mac OS X/.test(u)) os = 'macOS';
+    else if (/Linux/.test(u)) os = 'Linux';
+    var browser = '未知';
+    if (/Edg\//.test(u)) browser = 'Edge';
+    else if (/Chrome\//.test(u) && !/Edg/.test(u)) browser = 'Chrome';
+    else if (/Firefox\//.test(u)) browser = 'Firefox';
+    else if (/Safari\//.test(u) && !/Chrome/.test(u)) browser = 'Safari';
+    else if (/MSIE|Trident/.test(u)) browser = 'IE';
+    return os + ' · ' + browser;
+}
+
+function renderSessionRow(s, currentJti) {
+    var isCurrent = currentJti && s.jti === currentJti;
+    var device = parseUserAgent(s.user_agent);
+    var statusBadge = s.active ? '<span class="badge badge-success">活跃</span>' : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
+    var currentBadge = isCurrent ? ' <span class="badge badge-current-device">当前设备</span>' : '';
+    var op = '-';
+    if (s.active && !isCurrent) op = '<button type="button" class="btn btn-sm btn-danger" onclick="revokeSessionInModal(\'' + escapeHtml(s.jti) + '\')">撤销</button>';
+    else if (isCurrent) op = '<span class="form-hint">本机请使用右上角登出</span>';
+    var rowClass = isCurrent ? ' class="session-row-current"' : '';
+    return '<tr' + rowClass + '><td>' + escapeHtml(device) + currentBadge + '</td><td>' + escapeHtml(s.ip || '-') + '</td><td>' + formatBeijingTime(s.created_at) + '</td><td>' + formatBeijingTime(s.expires_at) + '</td><td>' + statusBadge + '</td><td>' + op + '</td></tr>';
+}
+
 async function openProfileModal() {
     if (!currentUser) return;
     var sessions = [];
     try {
         sessions = await API.get('/auth/sessions/me');
     } catch (e) { sessions = []; }
+    var currentJti = getCurrentJti();
     var roles = (currentUser.roles || []).map(function(r) { return r.name; }).join('、') || '无角色';
     var infoHtml = `
         <div class="profile-field"><label>用户名</label><span>${escapeHtml(currentUser.username)}</span></div>
@@ -1503,12 +1647,8 @@ async function openProfileModal() {
         <div class="profile-field"><label>状态</label><span class="badge ${currentUser.is_active ? 'badge-success' : 'badge-danger'}">${currentUser.is_active ? '已激活' : '未激活'}</span></div>
     `;
     var sessionsRows = !sessions || sessions.length === 0
-        ? '<tr><td colspan="7">暂无会话</td></tr>'
-        : sessions.map(function(s) {
-            var statusBadge = s.active ? '<span class="badge badge-success">活跃</span>' : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
-            var revokeBtn = s.active ? '<button type="button" class="btn btn-sm btn-danger" onclick="revokeSessionInModal(\'' + escapeHtml(s.jti) + '\')">撤销</button>' : '-';
-            return '<tr><td title="' + escapeHtml(s.jti) + '">' + (s.jti ? s.jti.substring(0, 12) + '...' : '-') + '</td><td>' + escapeHtml(s.ip || '-') + '</td><td title="' + escapeHtml(s.user_agent || '') + '">' + (s.user_agent ? s.user_agent.substring(0, 30) + '...' : '-') + '</td><td>' + formatBeijingTime(s.created_at) + '</td><td>' + formatBeijingTime(s.expires_at) + '</td><td>' + statusBadge + '</td><td>' + revokeBtn + '</td></tr>';
-        }).join('');
+        ? '<tr><td colspan="6">暂无会话</td></tr>'
+        : sessions.map(function(s) { return renderSessionRow(s, currentJti); }).join('');
     var content = `
         <div class="profile-modal-sections">
             <div class="profile-section profile-section-inline">
@@ -1536,10 +1676,11 @@ async function openProfileModal() {
             </div>
             <div class="profile-section profile-section-inline">
                 <h4>活跃会话</h4>
-                <p class="form-hint">可撤销不信任的会话。</p>
+                <p class="form-hint">可撤销不信任的会话，当前设备请使用右上角「登出」。</p>
+                <button type="button" class="btn btn-warning btn-sm" id="profileRevokeOthersBtn" style="margin-bottom:10px">一键退出其它设备</button>
                 <div class="table-container table-container-scroll">
-                    <table class="data-table">
-                        <thead><tr><th>会话ID</th><th>IP</th><th>浏览器</th><th>创建时间</th><th>过期时间</th><th>状态</th><th>操作</th></tr></thead>
+                    <table class="data-table sessions-table">
+                        <thead><tr><th>设备</th><th>IP</th><th>登录时间</th><th>过期时间</th><th>状态</th><th>操作</th></tr></thead>
                         <tbody id="profileModalSessionsBody">${sessionsRows}</tbody>
                     </table>
                 </div>
@@ -1562,6 +1703,29 @@ async function openProfileModal() {
         showMessage(res.message || '密码修改成功', 'success');
         form.reset();
     });
+
+    var revokeOthersBtn = document.getElementById('profileRevokeOthersBtn');
+    if (revokeOthersBtn) {
+        revokeOthersBtn.onclick = async function() {
+            if (!confirm('确定要退出除本机外的所有设备吗？其它设备需重新登录。')) return;
+            try {
+                var res = await API.post('/auth/sessions/me/revoke-others', {});
+                showMessage(res.message || '已退出其它设备', 'success');
+                var tbody = document.getElementById('profileModalSessionsBody');
+                if (tbody) {
+                    var sessions = await API.get('/auth/sessions/me');
+                    var currentJti = getCurrentJti();
+                    if (!sessions || sessions.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6">暂无会话</td></tr>';
+                    } else {
+                        tbody.innerHTML = sessions.map(function(s) { return renderSessionRow(s, currentJti); }).join('');
+                    }
+                }
+            } catch (e) {
+                showMessage('操作失败: ' + (e.message || ''), 'error');
+            }
+        };
+    }
 }
 
 async function revokeSessionInModal(jti) {
@@ -1572,14 +1736,11 @@ async function revokeSessionInModal(jti) {
         var tbody = document.getElementById('profileModalSessionsBody');
         if (tbody) {
             var sessions = await API.get('/auth/sessions/me');
+            var currentJti = getCurrentJti();
             if (!sessions || sessions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7">暂无会话</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6">暂无会话</td></tr>';
             } else {
-                tbody.innerHTML = sessions.map(function(s) {
-                    var statusBadge = s.active ? '<span class="badge badge-success">活跃</span>' : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
-                    var revokeBtn = s.active ? '<button type="button" class="btn btn-sm btn-danger" onclick="revokeSessionInModal(\'' + escapeHtml(s.jti) + '\')">撤销</button>' : '-';
-                    return '<tr><td title="' + escapeHtml(s.jti) + '">' + (s.jti ? s.jti.substring(0, 12) + '...' : '-') + '</td><td>' + escapeHtml(s.ip || '-') + '</td><td title="' + escapeHtml(s.user_agent || '') + '">' + (s.user_agent ? s.user_agent.substring(0, 30) + '...' : '-') + '</td><td>' + formatBeijingTime(s.created_at) + '</td><td>' + formatBeijingTime(s.expires_at) + '</td><td>' + statusBadge + '</td><td>' + revokeBtn + '</td></tr>';
-                }).join('');
+                tbody.innerHTML = sessions.map(function(s) { return renderSessionRow(s, currentJti); }).join('');
             }
         }
     } catch (e) {

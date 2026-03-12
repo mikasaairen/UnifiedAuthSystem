@@ -1,6 +1,7 @@
 """
 用户相关Schema
 """
+from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -88,8 +89,15 @@ class UserResponse(UserBase):
     """
     id: int
     is_active: bool
+    locked_until: Optional[datetime] = None
     roles: List[UserRoleInfo] = []
 
     class Config:
         from_attributes = True
+
+
+class DisableUserRequest(BaseModel):
+    """禁用用户请求：可选时长，不传则永久禁用"""
+    duration: Optional[str] = None  # 15m, 1h, 1d, 7d, 1month, 1year, permanent
+    custom_minutes: Optional[int] = None  # 自定义时长（分钟），优先于 duration
 

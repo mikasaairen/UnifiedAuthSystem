@@ -51,7 +51,9 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         user = self.get_by_username(db, username=username)
         if not user:
             return None
-        # 账户锁定检查（防暴力破解）
+        if not user.is_active:
+            return None
+        # 账户锁定检查（防暴力破解或按时长禁用）
         if user.locked_until and user.locked_until > datetime.utcnow():
             return None
         if not verify_password(password, user.hashed_password):

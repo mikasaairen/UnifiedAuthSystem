@@ -73,8 +73,8 @@ class Settings(BaseSettings):
 
         return default
 
-    # 账户风控策略
-    LOGIN_MAX_FAILS: int = 5
+    # 账户风控策略（登录失败 N 次后自动锁定）
+    LOGIN_MAX_FAILS: int = 15
     LOGIN_LOCK_MINUTES: int = 15
     
     # 注册审核：开启后新注册用户需管理员审核方可登录
