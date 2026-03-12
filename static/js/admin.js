@@ -68,7 +68,7 @@ function applyNavVisibility() {
         roles: 'rbac:manage',
         apps: 'apps:manage',
         logs: 'logs:view',
-        system: 'users:manage',
+        system: 'system:manage',
     };
     Object.keys(map).forEach(function(page) {
         const items = document.querySelectorAll('.nav-item[data-page="' + page + '"]');

@@ -23,12 +23,14 @@ RBAC_SYSTEM_RESOURCES = [
     {"name": "角色权限管理", "path": "/api/v1/rbac", "method": None, "description": "角色、权限、资源及分配"},
     {"name": "应用管理", "path": "/api/v1/apps", "method": None, "description": "应用注册、审核、列表等"},
     {"name": "审计日志", "path": "/api/v1/logs", "method": None, "description": "审计日志查询与导出"},
+    {"name": "系统设置", "path": "/api/v1/system", "method": None, "description": "系统设置、安全概览等"},
 ]
 RBAC_SYSTEM_PERMISSIONS = [
     ("users:manage", "用户管理"),
     ("rbac:manage", "角色权限管理"),
     ("apps:manage", "应用管理"),
     ("logs:view", "审计日志"),
+    ("system:manage", "系统设置"),
 ]
 
 

@@ -23,7 +23,7 @@ class SystemSettingsUpdate(BaseModel):
 
 @router.get("/settings", response_model=SystemSettingsResponse)
 async def get_settings(
-    current_user: User = Depends(require_permission("users:manage")),
+    current_user: User = Depends(require_permission("system:manage")),
 ):
     return SystemSettingsResponse(
         require_registration_approval=settings.REQUIRE_REGISTRATION_APPROVAL,
@@ -33,7 +33,7 @@ async def get_settings(
 @router.put("/settings", response_model=SystemSettingsResponse)
 async def update_settings(
     body: SystemSettingsUpdate,
-    current_user: User = Depends(require_permission("users:manage")),
+    current_user: User = Depends(require_permission("system:manage")),
 ):
     if body.require_registration_approval is not None:
         settings.REQUIRE_REGISTRATION_APPROVAL = body.require_registration_approval
@@ -51,7 +51,7 @@ class SecurityOverview(BaseModel):
 
 @router.get("/security-overview", response_model=SecurityOverview)
 async def get_security_overview(
-    current_user: User = Depends(require_permission("users:manage")),
+    current_user: User = Depends(require_permission("system:manage")),
     db: Session = Depends(get_db),
 ):
     """安全概览：黑名单大小、锁定账户数、待审核用户数、近期安全告警数"""
