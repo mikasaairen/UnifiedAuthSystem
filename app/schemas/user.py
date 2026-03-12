@@ -91,6 +91,7 @@ class UserResponse(UserBase):
     is_active: bool
     locked_until: Optional[datetime] = None
     roles: List[UserRoleInfo] = []
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

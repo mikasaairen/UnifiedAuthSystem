@@ -122,7 +122,8 @@ function switchPage(pageName) {
             loadOverview();
             break;
         case 'users':
-            loadUsers();
+            loadUserRoleFilterOptions();
+            switchUsersTab(document.querySelector('#usersPage .tab-btn.active')?.getAttribute('data-tab') || 'usersList');
             break;
         case 'roles':
             loadRoles();
@@ -380,6 +381,38 @@ async function loadSecurityOverview() {
 }
 
 // ========== 用户管理 ==========
+function switchUsersTab(tabId) {
+    var tab = tabId || 'usersList';
+    document.querySelectorAll('#usersPage .tab-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+    });
+    document.querySelectorAll('#usersPage .tab-content').forEach(function(el) {
+        el.classList.toggle('active', el.id === tab + 'Tab');
+    });
+    if (tab === 'approval') {
+        loadPendingUsers();
+    } else {
+        loadUsers();
+    }
+}
+
+async function loadUserRoleFilterOptions() {
+    var sel = document.getElementById('userRoleFilter');
+    if (!sel) return;
+    try {
+        var roles = await API.get('/rbac/roles');
+        var opts = '<option value="">全部</option><option value="__no_role__">无角色</option>';
+        if (Array.isArray(roles)) {
+            roles.forEach(function(r) {
+                opts += '<option value="' + escapeHtml(r.name) + '">' + escapeHtml(r.name) + '</option>';
+            });
+        }
+        sel.innerHTML = opts;
+    } catch (e) {
+        sel.innerHTML = '<option value="">全部</option><option value="__no_role__">无角色</option>';
+    }
+}
+
 async function loadUsers() {
     const feedbackEl = document.getElementById('userSearchFeedback');
     const tbody = document.getElementById('usersTableBody');
@@ -388,7 +421,7 @@ async function loadUsers() {
         tbody.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
         const keyword = document.getElementById('userSearch')?.value?.trim();
         const roleFilter = document.getElementById('userRoleFilter')?.value;
-        let url = '/users/?limit=500';
+        let url = '/users/?limit=500&is_active=true';
         if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
         if (roleFilter && roleFilter.trim()) url += '&role_name=' + encodeURIComponent(roleFilter.trim());
         const users = await API.get(url);
@@ -425,6 +458,55 @@ async function loadUsers() {
         console.error('加载用户列表失败:', error);
         if (feedbackEl) feedbackEl.textContent = '加载失败';
         if (tbody) tbody.innerHTML = '<tr><td colspan="8">加载失败</td></tr>';
+    }
+}
+
+async function loadPendingUsers() {
+    var tbody = document.getElementById('pendingTableBody');
+    if (!tbody) return;
+    try {
+        tbody.innerHTML = '<tr><td colspan="6">加载中...</td></tr>';
+        var users = await API.get('/users/?limit=500&is_active=false');
+        if (!users || users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6">暂无待审核用户</td></tr>';
+            return;
+        }
+        tbody.innerHTML = users.map(function(user) {
+            var createdAt = user.created_at ? formatBeijingTime(user.created_at) : '-';
+            return '<tr>' +
+                '<td>' + user.id + '</td>' +
+                '<td>' + escapeHtml(user.username) + '</td>' +
+                '<td>' + escapeHtml(user.email) + '</td>' +
+                '<td>' + escapeHtml(user.full_name || '-') + '</td>' +
+                '<td>' + createdAt + '</td>' +
+                '<td><button class="btn btn-sm btn-success" onclick="approveUser(' + user.id + ')">通过</button> <button class="btn btn-sm btn-danger" onclick="rejectUser(' + user.id + ')">拒绝</button></td>' +
+                '</tr>';
+        }).join('');
+    } catch (e) {
+        console.error('加载待审核列表失败:', e);
+        tbody.innerHTML = '<tr><td colspan="6">加载失败</td></tr>';
+    }
+}
+
+async function approveUser(userId) {
+    if (!confirm('确定通过该用户的注册申请？通过后可登录系统。')) return;
+    try {
+        await API.post('/users/' + userId + '/enable');
+        showMessage('已通过，该用户可登录', 'success');
+        loadPendingUsers();
+    } catch (e) {
+        showMessage('操作失败: ' + (e.message || ''), 'error');
+    }
+}
+
+async function rejectUser(userId) {
+    if (!confirm('确定拒绝该用户的注册？拒绝后将删除该账号。')) return;
+    try {
+        await API.request('/users/' + userId, { method: 'DELETE' });
+        showMessage('已拒绝并删除该账号', 'success');
+        loadPendingUsers();
+    } catch (e) {
+        showMessage('操作失败: ' + (e.message || ''), 'error');
     }
 }
 

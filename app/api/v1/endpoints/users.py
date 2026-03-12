@@ -10,7 +10,7 @@ from app.core.rate_limit import limiter
 from app.api.deps import get_current_active_user, get_db, require_permission
 from app.core.token_blacklist import add_to_blacklist
 from app.core.config import settings
-from app.crud import crud_user, crud_audit
+from app.crud import crud_user, crud_audit, crud_role
 from app.schemas.user import (
     UserCreate, UserCreateByAdmin, UserUpdate, UserResponse,
     UserBatchDeleteRequest, ChangePasswordRequest, ChangePasswordResponse,
@@ -78,6 +78,10 @@ async def register(
         db.add(user)
         db.commit()
         db.refresh(user)
+    # 为注册用户自动分配 user 角色（无论是否需审核）
+    user_role = crud_role.get_by_name(db, name="user")
+    if user_role:
+        crud_role.assign_to_user(db, user_id=user.id, role_ids=[user_role.id])
 
     crud_audit.create_log(
         db,
@@ -197,10 +201,11 @@ async def list_users(
     db: Session = Depends(get_db)
 ):
     """
-    获取用户列表，支持关键词模糊搜索、按角色名筛选，默认按 ID 升序
+    获取用户列表，支持关键词模糊搜索、按角色名筛选，默认按 ID 升序。
+    role_name 为 __no_role__ 时仅返回无任何角色的用户。
     """
-    from sqlalchemy import or_
-    from app.models.rbac import Role
+    from sqlalchemy import or_, select
+    from app.models.rbac import Role, user_roles
     query = db.query(User)
     if keyword and keyword.strip():
         kw = f"%{keyword.strip()}%"
@@ -208,7 +213,13 @@ async def list_users(
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
     if role_name and role_name.strip():
-        query = query.join(User.roles).filter(Role.name == role_name.strip()).distinct()
+        rn = role_name.strip()
+        if rn == "__no_role__":
+            # 无角色：不在 user_roles 中的用户
+            subq = select(user_roles.c.user_id).distinct()
+            query = query.filter(~User.id.in_(subq))
+        else:
+            query = query.join(User.roles).filter(Role.name == rn).distinct()
     users = query.order_by(User.id).offset(skip).limit(limit).all()
     return users
 
