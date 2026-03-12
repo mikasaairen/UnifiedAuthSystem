@@ -1,7 +1,7 @@
 """
 登录接口 (OAuth2 Password Flow)
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, Form
 from fastapi.security import OAuth2PasswordRequestForm
@@ -113,6 +113,7 @@ async def login(
             app_id=None,
             jti=jti,
             refresh_token_hash=hash_token(refresh_token),
+            created_at=datetime.utcnow(),
             expires_at=refresh_expires_at,
             ip=request.client.host if request and request.client else None,
             user_agent=request.headers.get("user-agent") if request else None,
@@ -471,6 +472,7 @@ async def token(
             app_id=app.id,
             jti=jti,
             refresh_token_hash=hash_token(refresh_token),
+            created_at=datetime.utcnow(),
             expires_at=refresh_expires_at,
             ip=request.client.host if request and request.client else None,
             user_agent=request.headers.get("user-agent") if request else None,
@@ -531,27 +533,42 @@ async def introspect(
         return {"active": False}
 
 
+def _to_utc_iso(dt) -> Optional[str]:
+    """将 datetime 统一输出为 UTC ISO 字符串（不带时区后缀，前端统一按 UTC 处理）。"""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        from datetime import timezone as _tz
+        dt = dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt.isoformat()
+
+
 @router.get("/sessions/me")
 async def list_my_sessions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """列出当前用户的活跃会话（可查看并管理）。"""
-    from datetime import datetime
-    sessions = crud_session.get_by_user_id(db, user_id=current_user.id)
     now = datetime.utcnow()
-    return [
-        {
+    sessions = crud_session.get_by_user_id(db, user_id=current_user.id)
+    out = []
+    for s in sessions:
+        created = s.created_at
+        expires = s.expires_at
+        if expires:
+            is_active = s.revoked_at is None and expires > now
+        else:
+            is_active = False
+        out.append({
             "jti": s.jti,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "expires_at": s.expires_at.isoformat() if s.expires_at else None,
+            "created_at": _to_utc_iso(created),
+            "expires_at": _to_utc_iso(expires),
             "revoked": s.revoked_at is not None,
             "ip": s.ip,
             "user_agent": s.user_agent or "",
-            "active": s.revoked_at is None and (s.expires_at and s.expires_at > now),
-        }
-        for s in sessions
-    ]
+            "active": is_active,
+        })
+    return out
 
 
 @router.delete("/sessions/me")

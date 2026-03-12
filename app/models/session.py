@@ -26,7 +26,7 @@ class Session(Base):
     # refresh token 只存 hash，防止数据库泄露导致 token 可用
     refresh_token_hash = Column(String(255), nullable=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), nullable=False)
     expires_at = Column(DateTime(timezone=False), nullable=False, index=True)
     revoked_at = Column(DateTime(timezone=False), nullable=True)
 
