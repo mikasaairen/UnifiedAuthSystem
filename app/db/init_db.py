@@ -107,12 +107,33 @@ def seed_rbac_system(db: Session) -> None:
         print("✓ 已为 admin 角色分配管理端权限（细粒度）")
 
 
+def _migrate_approved_at():
+    """为已有 users 表添加 approved_at 列，并将现有用户设为已审核"""
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    try:
+        columns = [c["name"] for c in inspector.get_columns("users")]
+    except Exception:
+        return
+    if "approved_at" in columns:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN approved_at DATETIME NULL"))
+        conn.commit()
+    # 现有用户设为已审核（出现在用户管理）
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE users SET approved_at = COALESCE(created_at, NOW()) WHERE approved_at IS NULL"))
+        conn.commit()
+    print("✓ 已添加 approved_at 列并迁移现有用户")
+
+
 def init_db(db: Session) -> None:
     """
     初始化数据库：创建表、超级管理员、初始角色、RBAC 资源与权限
     """
     # 创建所有表
     Base.metadata.create_all(bind=engine)
+    _migrate_approved_at()
 
     # 创建超级管理员
     user = crud_user.get_by_username(db, username=settings.FIRST_SUPERUSER_USERNAME)
@@ -125,6 +146,11 @@ def init_db(db: Session) -> None:
             is_admin=True,
         )
         user = crud_user.create(db, obj_in=user_in)
+        from datetime import datetime
+        user.approved_at = datetime.utcnow()
+        db.add(user)
+        db.commit()
+        db.refresh(user)
         print(f"✓ 创建超级管理员: {user.username}")
     else:
         print(f"✓ 超级管理员已存在: {user.username}")

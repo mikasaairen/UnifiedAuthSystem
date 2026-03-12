@@ -30,6 +30,8 @@ class User(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    # 审核通过时间：NULL 表示待审核（仅出现在注册审核）；非空表示已审核（出现在用户管理）
+    approved_at = Column(DateTime(timezone=False), nullable=True)
     
     # 关联关系
     # RBAC：用户-角色（多对多），关联表定义在 app/models/rbac.py

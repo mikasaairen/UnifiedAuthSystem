@@ -18,6 +18,7 @@ from app.schemas.user import (
 )
 from app.models.user import User
 from app.models.session import Session as SessionModel
+from app.core.login_fail_store import clear_by_username
 
 
 def _parse_disable_duration(body: DisableUserRequest) -> Optional[timedelta]:
@@ -75,6 +76,12 @@ async def register(
     need_approval = settings.REQUIRE_REGISTRATION_APPROVAL
     if need_approval:
         user.is_active = False
+        # approved_at 保持 NULL，仅出现在「注册审核」
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    else:
+        user.approved_at = datetime.utcnow()
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -130,8 +137,11 @@ async def create_user_by_admin(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱已被注册")
     role_ids = user_in.role_ids or []
     user = crud_user.create(db, obj_in=user_in)
+    user.approved_at = datetime.utcnow()  # 管理员创建即为已审核
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     if role_ids:
-        from app.crud.crud_rbac import crud_role
         try:
             crud_role.assign_to_user(db, user_id=user.id, role_ids=role_ids)
         except ValueError:
@@ -194,19 +204,24 @@ async def change_password(
 async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    is_active: Optional[bool] = Query(None, description="是否激活"),
+    scope: Optional[str] = Query(None, description="scope=managed 已审核用户（用户管理）, scope=pending 待审核用户（注册审核）"),
+    is_active: Optional[bool] = Query(None, description="是否激活（仅在 scope=managed 时有效）"),
     role_name: Optional[str] = Query(None, description="按角色名筛选：admin / user / operator"),
     keyword: Optional[str] = Query(None, description="搜索用户名或邮箱（模糊）"),
     current_user: User = Depends(require_permission("users:manage")),
     db: Session = Depends(get_db)
 ):
     """
-    获取用户列表，支持关键词模糊搜索、按角色名筛选，默认按 ID 升序。
+    获取用户列表。scope=managed 仅返回已审核用户（用户管理）；scope=pending 仅返回待审核用户（注册审核）。
     role_name 为 __no_role__ 时仅返回无任何角色的用户。
     """
     from sqlalchemy import or_, select
     from app.models.rbac import Role, user_roles
     query = db.query(User)
+    if scope == "pending":
+        query = query.filter(User.approved_at.is_(None))
+    elif scope == "managed":
+        query = query.filter(User.approved_at.isnot(None))
     if keyword and keyword.strip():
         kw = f"%{keyword.strip()}%"
         query = query.filter(or_(User.username.like(kw), User.email.like(kw)))
@@ -361,9 +376,13 @@ async def enable_user(
     user.is_active = True
     user.locked_until = None
     user.failed_login_attempts = 0
+    if user.approved_at is None:
+        user.approved_at = datetime.utcnow()  # 审核通过，从「注册审核」移至「用户管理」
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    clear_by_username(user.username)  # 清除登录失败锁定（所有 IP）
 
     crud_audit.create_log(
         db,

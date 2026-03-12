@@ -1,6 +1,9 @@
 """
 登录接口 (OAuth2 Password Flow)
+
+登录失败按「用户名 + IP」单独计数与锁定，见 app.core.login_fail_store。
 """
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, Form
@@ -10,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.rate_limit import limiter
 
 from app.core.config import settings
+from app.core.login_fail_store import is_locked, record_fail, clear as login_fail_clear
 from app.api.deps import SSO_COOKIE_NAME
 from app.core.security import (
     create_access_token,
@@ -28,6 +32,75 @@ from app.schemas.token import Token
 from app.models.user import User
 
 router = APIRouter()
+
+# 滥用检测阈值：同一 IP 短时间锁定账号数 / 同一账号被锁定次数
+LOCK_ABUSE_IP_ACCOUNT_COUNT = 3   # 同一 IP 1 小时内锁定的不同账号数
+LOCK_ABUSE_USER_LOCK_COUNT = 5     # 同一账号 24 小时内被锁定次数
+LOCK_ABUSE_IP_WINDOW_HOURS = 1
+LOCK_ABUSE_USER_WINDOW_HOURS = 24
+
+
+def _check_lock_abuse_and_alert(db: Session, username: str, ip: Optional[str], request: Optional[Request]) -> None:
+    """
+    检测「同一 IP 短时间触发多账号锁定」「同一账号被多次锁定」并写入 security_alert 日志。
+    """
+    now = datetime.utcnow()
+    ip_window = now - timedelta(hours=LOCK_ABUSE_IP_WINDOW_HOURS)
+    user_window = now - timedelta(hours=LOCK_ABUSE_USER_WINDOW_HOURS)
+    logs = crud_audit.get_logs(
+        db, action="login_lock", start_time=user_window, limit=500
+    )
+    if not logs:
+        return
+    ip_to_usernames = {}
+    username_lock_count = {}
+    for log in logs:
+        try:
+            d = json.loads(log.details or "{}")
+            u = (d.get("username") or "").strip()
+        except Exception:
+            u = ""
+        log_time = log.created_at if hasattr(log, "created_at") and log.created_at else now
+        if log.ip and log_time >= ip_window:
+            ip_to_usernames.setdefault(log.ip, set()).add(u)
+        if u and log_time >= user_window:
+            username_lock_count[u] = username_lock_count.get(u, 0) + 1
+
+    client_ip = ip or (request.client.host if request and request.client else None)
+    if client_ip and len(ip_to_usernames.get(client_ip, set())) >= LOCK_ABUSE_IP_ACCOUNT_COUNT:
+        crud_audit.create_log(
+            db,
+            actor_user_id=None,
+            action="security_alert",
+            app_id=None,
+            resource=None,
+            ip=client_ip,
+            user_agent=request.headers.get("user-agent") if request else None,
+            success=False,
+            details=json.dumps({
+                "type": "multi_account_lock_by_ip",
+                "ip": client_ip,
+                "account_count": len(ip_to_usernames[client_ip]),
+                "window_hours": LOCK_ABUSE_IP_WINDOW_HOURS,
+            }, ensure_ascii=False),
+        )
+    if username and username_lock_count.get(username, 0) >= LOCK_ABUSE_USER_LOCK_COUNT:
+        crud_audit.create_log(
+            db,
+            actor_user_id=None,
+            action="security_alert",
+            app_id=None,
+            resource=None,
+            ip=client_ip,
+            user_agent=request.headers.get("user-agent") if request else None,
+            success=False,
+            details=json.dumps({
+                "type": "repeated_account_lock",
+                "username": username,
+                "lock_count": username_lock_count[username],
+                "window_hours": LOCK_ABUSE_USER_WINDOW_HOURS,
+            }, ensure_ascii=False),
+        )
 
 
 def _redirect_uri_matches_app(redirect_uri: str, app_callback_url: Optional[str]) -> bool:
@@ -49,26 +122,71 @@ async def login(
 ):
     """
     OAuth2 兼容的登录接口。带 client_id、redirect_uri 时生成授权码并返回 redirect_url 与 token；否则仅返回 access_token、refresh_token。
+    登录失败按 (用户名+IP) 单独计数与锁定，见 login_fail_store。
     """
+    client_ip = request.client.host if request and request.client else None
+    username = form_data.username
+
+    # 按 (username, ip) 检查是否处于锁定状态
+    locked, remaining_sec = is_locked(username, client_ip or "")
+    if locked:
+        mins, secs = remaining_sec // 60, remaining_sec % 60
+        msg = f"该 IP 对此账号的登录尝试过多，请 {mins} 分 {secs} 秒后再试"
+        crud_audit.create_log(
+            db,
+            actor_user_id=None,
+            action="login",
+            app_id=None,
+            resource=None,
+            ip=client_ip,
+            user_agent=request.headers.get("user-agent") if request else None,
+            success=False,
+            details=json.dumps({"reason": "ip_username_locked", "remaining_seconds": remaining_sec}, ensure_ascii=False),
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
+
     try:
         user = crud_user.authenticate(
-            db, username=form_data.username, password=form_data.password
+            db, username=username, password=form_data.password
         )
         if not user:
-            maybe_user = crud_user.get_by_username(db, username=form_data.username)
-            just_locked = getattr(maybe_user, "_just_locked", False) if maybe_user else False
-            crud_audit.create_log(
-                db,
-                actor_user_id=maybe_user.id if maybe_user else None,
-                action="account_locked" if just_locked else "login",
-                app_id=None,
-                resource=None,
-                ip=request.client.host if request and request.client else None,
-                user_agent=request.headers.get("user-agent") if request else None,
-                success=False,
-                details=f'{{"reason": "account_locked", "lock_minutes": {settings.LOGIN_LOCK_MINUTES}}}'
-                    if just_locked else '{"reason": "bad_credentials_or_locked"}',
-            )
+            maybe_user = crud_user.get_by_username(db, username=username)
+            just_locked = record_fail(username, client_ip or "")
+            if just_locked:
+                # 同步到 User 表，便于用户管理页面显示并支持手动解封
+                if maybe_user:
+                    maybe_user.locked_until = datetime.utcnow() + timedelta(minutes=settings.LOGIN_LOCK_MINUTES)
+                    db.add(maybe_user)
+                    db.commit()
+                crud_audit.create_log(
+                    db,
+                    actor_user_id=maybe_user.id if maybe_user else None,
+                    action="login_lock",
+                    app_id=None,
+                    resource=None,
+                    ip=client_ip,
+                    user_agent=request.headers.get("user-agent") if request else None,
+                    success=False,
+                    details=json.dumps({
+                        "username": username,
+                        "ip": client_ip,
+                        "reason": "max_failures",
+                        "lock_minutes": settings.LOGIN_LOCK_MINUTES,
+                    }, ensure_ascii=False),
+                )
+                _check_lock_abuse_and_alert(db, username, client_ip, request)
+            else:
+                crud_audit.create_log(
+                    db,
+                    actor_user_id=maybe_user.id if maybe_user else None,
+                    action="login",
+                    app_id=None,
+                    resource=None,
+                    ip=client_ip,
+                    user_agent=request.headers.get("user-agent") if request else None,
+                    success=False,
+                    details=json.dumps({"reason": "bad_credentials_or_locked"}, ensure_ascii=False),
+                )
             if maybe_user and not maybe_user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -88,6 +206,9 @@ async def login(
                 detail="用户名或密码错误",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        login_fail_clear(username, client_ip or "")
+
         if not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -274,9 +395,9 @@ async def logout(
     db: Session = Depends(get_db),
 ):
     """
-    登出接口：撤销服务端会话（refresh token 失效），并清除 SSO Cookie。
+    登出接口：撤销服务端会话（refresh token 失效），并清除 SSO Cookie。记录登出审计日志。
     """
-    # 优先从 Bearer 或 Cookie 获取 token，以便撤销对应会话
+    actor_user_id = None
     token: Optional[str] = request.cookies.get(SSO_COOKIE_NAME)
     if not token:
         auth_header = request.headers.get("Authorization")
@@ -285,14 +406,30 @@ async def logout(
     if token:
         try:
             payload = verify_token(token)
+            username = payload.get("sub")
             jti = payload.get("jti")
+            if username:
+                u = crud_user.get_by_username(db, username=username)
+                if u:
+                    actor_user_id = u.id
             if jti:
                 add_to_blacklist(jti, ttl_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-                sess = crud_session.crud_session.get_by_jti(db, jti=jti)
-                if sess and crud_session.crud_session.is_active(sess):
-                    crud_session.crud_session.revoke(db, db_obj=sess)
+                sess = crud_session.get_by_jti(db, jti=jti)
+                if sess and crud_session.is_active(sess):
+                    crud_session.revoke(db, db_obj=sess)
         except (ValueError, Exception):
             pass
+    crud_audit.create_log(
+        db,
+        actor_user_id=actor_user_id,
+        action="logout",
+        app_id=None,
+        resource=None,
+        ip=request.client.host if request and request.client else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+        success=True,
+        details=json.dumps({"message": "用户登出"}, ensure_ascii=False),
+    )
     resp = JSONResponse(content={"message": "登出成功"})
     resp.delete_cookie(key=SSO_COOKIE_NAME, path="/", httponly=True, samesite="lax")
     return resp

@@ -180,7 +180,7 @@ async def get_action_distribution(
         "app_disable": "应用禁用", "app_enable": "应用启用",
         "check_permission": "权限检查", "introspect": "令牌内省",
         "change_password": "修改密码", "account_locked": "账户锁定",
-        "security_alert": "安全告警",
+        "login_lock": "登录锁定(IP+用户)", "security_alert": "安全告警",
     }
     return [
         {"action": r.action, "label": action_labels.get(r.action, r.action), "count": r.cnt}
@@ -201,7 +201,7 @@ async def get_security_alerts(
     alerts = (
         db.query(AuditLog)
         .filter(
-            AuditLog.action.in_(["security_alert", "account_locked"]),
+            AuditLog.action.in_(["security_alert", "account_locked", "login_lock"]),
             AuditLog.created_at >= start,
         )
         .order_by(AuditLog.created_at.desc())

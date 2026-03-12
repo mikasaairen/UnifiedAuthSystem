@@ -370,7 +370,7 @@ async function loadSecurityOverview() {
                 listEl.innerHTML = '<p class="form-hint">近7天无安全告警</p>';
             } else {
                 listEl.innerHTML = alerts.map(function(a) {
-                    var typeLabel = a.action === 'account_locked' ? '账户锁定' : '安全告警';
+                    var typeLabel = a.action === 'account_locked' ? '账户锁定' : (a.action === 'login_lock' ? '登录锁定' : '安全告警');
                     var detail = '';
                     try { var d = JSON.parse(a.details || '{}'); detail = d.type === 'ip_change' ? '异地登录 ' + (d.prev_ip||'') + ' → ' + (d.new_ip||'') : (d.reason || ''); } catch(e) {}
                     return '<div class="alert-item"><span class="badge badge-danger">' + typeLabel + '</span> 用户ID:' + (a.actor_user_id||'-') + ' IP:' + (a.ip||'-') + ' ' + detail + ' <small>' + formatBeijingTime(a.created_at) + '</small></div>';
@@ -420,8 +420,11 @@ async function loadUsers() {
     try {
         tbody.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
         const keyword = document.getElementById('userSearch')?.value?.trim();
+        const statusFilter = document.getElementById('userStatusFilter')?.value;
         const roleFilter = document.getElementById('userRoleFilter')?.value;
-        let url = '/users/?limit=500&is_active=true';
+        let url = '/users/?limit=500&scope=managed';
+        if (statusFilter === 'active') url += '&is_active=true';
+        else if (statusFilter === 'disabled') url += '&is_active=false';
         if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
         if (roleFilter && roleFilter.trim()) url += '&role_name=' + encodeURIComponent(roleFilter.trim());
         const users = await API.get(url);
@@ -466,7 +469,7 @@ async function loadPendingUsers() {
     if (!tbody) return;
     try {
         tbody.innerHTML = '<tr><td colspan="6">加载中...</td></tr>';
-        var users = await API.get('/users/?limit=500&is_active=false');
+        var users = await API.get('/users/?limit=500&scope=pending');
         if (!users || users.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6">暂无待审核用户</td></tr>';
             return;
@@ -651,17 +654,7 @@ async function enableUser(userId) {
         loadUsers();
         showMessage('已解封 / 已启用', 'success');
     } catch (error) {
-        showMessage('操作失败: ' + error.message, 'error');
-    }
-}
-
-async function enableUser(userId) {
-    try {
-        await API.post(`/users/${userId}/enable`);
-        loadUsers();
-        showMessage('用户已启用', 'success');
-    } catch (error) {
-        showMessage('操作失败: ' + error.message, 'error');
+        showMessage('操作失败: ' + (error.message || ''), 'error');
     }
 }
 
@@ -1565,7 +1558,7 @@ const LOG_ACTION_LABELS = {
     user_enable: '用户启用', user_delete: '用户删除',
     app_register: '应用注册', app_delete: '应用删除', app_approve: '应用审核', app_disable: '应用禁用', app_enable: '应用启用',
     check_permission: '权限检查', introspect: '令牌内省',
-    change_password: '修改密码', account_locked: '账户锁定', security_alert: '安全告警'
+    change_password: '修改密码', account_locked: '账户锁定', login_lock: '登录锁定(IP+用户)', security_alert: '安全告警'
 };
 
 function formatLogDetails(details) {

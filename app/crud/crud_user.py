@@ -1,11 +1,13 @@
 """
 用户增删改查
+
+说明：登录失败次数与按 (username,ip) 的锁定由 app.core.login_fail_store 与登录接口处理，
+此处仅做凭据校验与管理员设置的 locked_until 检查。
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash, verify_password
-from app.core.config import settings
 from app.crud.base import CRUDBase, get_next_available_id
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
@@ -46,25 +48,19 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
     
     def authenticate(self, db: Session, *, username: str, password: str) -> Optional[User]:
         """
-        验证用户凭据
+        验证用户凭据。登录失败次数与 (username,ip) 锁定由 login_fail_store 在登录接口中处理。
         """
         user = self.get_by_username(db, username=username)
         if not user:
             return None
         if not user.is_active:
             return None
-        # 账户锁定检查（防暴力破解或按时长禁用）
+        # 管理员设置的按时长锁定（如禁用 15 分钟）
         if user.locked_until and user.locked_until > datetime.utcnow():
             return None
         if not verify_password(password, user.hashed_password):
-            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-            if user.failed_login_attempts >= settings.LOGIN_MAX_FAILS:
-                user.locked_until = datetime.utcnow() + timedelta(minutes=settings.LOGIN_LOCK_MINUTES)
-                user._just_locked = True
-            db.add(user)
-            db.commit()
             return None
-        # 登录成功：清空失败计数与锁定
+        # 登录成功：清空用户表上的失败计数与锁定（兼容历史/管理员操作）
         user.failed_login_attempts = 0
         user.locked_until = None
         db.add(user)
