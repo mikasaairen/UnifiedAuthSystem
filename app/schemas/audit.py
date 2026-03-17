@@ -2,7 +2,7 @@
 审计日志相关Schema
 """
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -42,4 +42,10 @@ class AuditLogResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class AuditLogListResponse(BaseModel):
+    """审计日志列表分页响应"""
+    items: List[AuditLogResponse]
+    total: int
 

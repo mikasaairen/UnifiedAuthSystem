@@ -13,7 +13,7 @@ import re
 from app.api.deps import get_db, require_permission
 from app.crud import crud_audit
 from app.models.user import User
-from app.schemas.audit import AuditLogResponse
+from app.schemas.audit import AuditLogResponse, AuditLogListResponse
 
 router = APIRouter()
 
@@ -61,7 +61,7 @@ def _parse_end_time(s: Optional[str]):
     return dt
 
 
-@router.get("/", response_model=list[AuditLogResponse])
+@router.get("/", response_model=AuditLogListResponse)
 async def get_audit_logs(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -82,6 +82,15 @@ async def get_audit_logs(
     success_val = None
     if success is not None:
         success_val = success
+    total = crud_audit.get_logs_count(
+        db,
+        user_id=user_id,
+        app_id=app_id,
+        action=action,
+        success=success_val,
+        start_time=start_dt,
+        end_time=end_dt
+    )
     logs = crud_audit.get_logs(
         db,
         skip=skip,
@@ -93,7 +102,7 @@ async def get_audit_logs(
         start_time=start_dt,
         end_time=end_dt
     )
-    return logs
+    return AuditLogListResponse(items=logs, total=total)
 
 
 @router.get("/stats")

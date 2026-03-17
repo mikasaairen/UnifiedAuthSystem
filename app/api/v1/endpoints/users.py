@@ -12,7 +12,7 @@ from app.core.token_blacklist import add_to_blacklist
 from app.core.config import settings
 from app.crud import crud_user, crud_audit, crud_role
 from app.schemas.user import (
-    UserCreate, UserCreateByAdmin, UserUpdate, UserResponse,
+    UserCreate, UserCreateByAdmin, UserUpdate, UserResponse, UserListResponse,
     UserBatchDeleteRequest, ChangePasswordRequest, ChangePasswordResponse,
     DisableUserRequest,
 )
@@ -55,6 +55,11 @@ async def register(
     """
     用户注册
     """
+    if not settings.ALLOW_REGISTRATION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="系统已关闭注册"
+        )
     # 检查用户名是否已存在
     user = crud_user.get_by_username(db, username=user_in.username)
     if user:
@@ -200,7 +205,7 @@ async def change_password(
     return ChangePasswordResponse(message="密码修改成功")
 
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=UserListResponse)
 async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -235,8 +240,9 @@ async def list_users(
             query = query.filter(~User.id.in_(subq))
         else:
             query = query.join(User.roles).filter(Role.name == rn).distinct()
+    total = query.count()
     users = query.order_by(User.id).offset(skip).limit(limit).all()
-    return users
+    return UserListResponse(items=users, total=total)
 
 
 @router.get("/{user_id}", response_model=UserResponse)

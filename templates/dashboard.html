@@ -5,15 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>统一认证系统 - 管理控制台</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
-<body>
-    <!-- 右上角：用户信息 + 个人中心 + 登出 -->
-    <div class="dashboard-topbar">
-        <span class="topbar-user" id="userInfoTopbar">加载中...</span>
-        <button type="button" id="profileTopbarBtn" class="btn btn-secondary btn-sm topbar-btn">个人中心</button>
-        <button type="button" id="logoutBtn" class="btn btn-secondary btn-sm logout-btn-topbar">登出</button>
-    </div>
+<body class="dashboard-page">
+    <!-- 主内容区上方通栏：左侧当前页标题，右侧个人信息与操作 -->
+    <header class="dashboard-topbar">
+        <div class="topbar-left">
+            <h1 id="pageTitle" class="topbar-title">概览</h1>
+        </div>
+        <div class="topbar-right">
+            <div class="topbar-user-wrap">
+                <span class="topbar-user" id="userInfoTopbar">加载中...</span>
+            </div>
+            <button type="button" id="profileTopbarBtn" class="btn topbar-btn">个人中心</button>
+            <button type="button" id="logoutBtn" class="btn topbar-btn">登出</button>
+        </div>
+    </header>
 
     <div class="dashboard-container">
         <!-- 侧边栏导航 -->
@@ -23,35 +29,68 @@
             </div>
             <nav class="sidebar-nav">
                 <a href="#" class="nav-item" data-page="workbench">
-                    <span>🏠</span> 工作台
+                    <span class="nav-icon">🏠</span><span class="nav-text">工作台</span>
                 </a>
-                <a href="#" class="nav-item active" data-page="overview">
-                    <span>📊</span> 概览
+                <a href="#" class="nav-item" data-page="overview">
+                    <span class="nav-icon">📊</span><span class="nav-text">概览</span>
                 </a>
-                <a href="#" class="nav-item" data-page="users">
-                    <span>👥</span> 用户管理
-                </a>
-                <a href="#" class="nav-item" data-page="roles">
-                    <span>🔐</span> 角色权限
-                </a>
-                <a href="#" class="nav-item" data-page="apps">
-                    <span>📱</span> 应用管理
-                </a>
-                <a href="#" class="nav-item" data-page="logs">
-                    <span>📋</span> 审计日志
-                </a>
-                <a href="#" class="nav-item" data-page="system">
-                    <span>⚙️</span> 系统设置
-                </a>
+                <div class="nav-group" data-group="system">
+                    <div class="nav-group-toggle">
+                        <span class="nav-icon">⚙</span><span class="nav-text">系统管理</span>
+                        <span class="nav-group-arrow">▼</span>
+                    </div>
+                    <div class="nav-group-children">
+                        <div class="nav-group nav-group-nested" data-group="users">
+                            <div class="nav-group-toggle">
+                                <span class="nav-text">用户管理</span>
+                                <span class="nav-group-arrow">▼</span>
+                            </div>
+                            <div class="nav-group-children">
+                                <a href="#" class="nav-item" data-page="usersList"><span class="nav-text">用户列表</span></a>
+                                <a href="#" class="nav-item" data-page="approval"><span class="nav-text">注册审核</span></a>
+                            </div>
+                        </div>
+                        <div class="nav-group nav-group-nested" data-group="roles">
+                            <div class="nav-group-toggle">
+                                <span class="nav-text">角色权限</span>
+                                <span class="nav-group-arrow">▼</span>
+                            </div>
+                            <div class="nav-group-children">
+                                <a href="#" class="nav-item" data-page="rolesList"><span class="nav-text">角色管理</span></a>
+                                <a href="#" class="nav-item" data-page="permissions"><span class="nav-text">权限管理</span></a>
+                                <a href="#" class="nav-item" data-page="resources"><span class="nav-text">资源管理</span></a>
+                            </div>
+                        </div>
+                        <a href="#" class="nav-item" data-page="apps">
+                            <span class="nav-text">应用管理</span>
+                        </a>
+                        <a href="#" class="nav-item" data-page="logs">
+                            <span class="nav-text">审计日志</span>
+                        </a>
+                        <a href="#" class="nav-item" data-page="system">
+                            <span class="nav-text">系统设置</span>
+                        </a>
+                    </div>
+                </div>
             </nav>
         </aside>
 
         <!-- 主内容区 -->
         <main class="main-content">
-            <header class="content-header">
-                <h1 id="pageTitle">概览</h1>
-            </header>
+            <!-- 多标签栏：可同时打开多个功能，点击侧栏在新标签打开或切换到已有标签 -->
+            <div class="main-tabs-bar">
+                <div class="main-tabs-list" id="mainTabsList"></div>
+                <div class="main-tabs-actions">
+                    <button type="button" class="main-tabs-dropdown-btn" id="tabsDropdownBtn" aria-haspopup="true" aria-expanded="false">▼ 标签操作</button>
+                    <div class="main-tabs-dropdown" id="tabsDropdown" role="menu" aria-hidden="true">
+                        <button type="button" role="menuitem" data-action="closeCurrent">关闭当前</button>
+                        <button type="button" role="menuitem" data-action="closeOthers">关闭其他</button>
+                        <button type="button" role="menuitem" data-action="closeAll">关闭全部</button>
+                    </div>
+                </div>
+            </div>
 
+            <div class="tab-panels-wrap">
             <!-- 工作台页面 -->
             <div id="workbenchPage" class="page-content">
                 <div class="workbench-category">已接入应用</div>
@@ -61,7 +100,7 @@
             </div>
 
             <!-- 概览页面：各统计卡片按权限显示，有权限则展示对应数据 -->
-            <div id="overviewPage" class="page-content active">
+            <div id="overviewPage" class="page-content">
                 <div class="stats-grid" id="overviewStatsGrid">
                     <div class="stat-card" id="statUsers" data-permission="users:manage" style="display:none">
                         <h3>用户总数</h3>
@@ -97,7 +136,7 @@
                 </div>
 
                 <!-- 安全告警卡片 -->
-                <div id="securityAlertCard" class="security-alert-card" data-permission="system:manage" style="display:none">
+                <div id="securityAlertCard" class="security-alert-card" data-permission="users:manage system:manage" style="display:none">
                     <h4>安全概览</h4>
                     <div class="security-stats" id="securityStatsContent">加载中...</div>
                     <h4 style="margin-top:12px">近期安全告警</h4>
@@ -116,16 +155,17 @@
                 </div>
             </div>
 
-            <!-- 用户管理页面：子页 用户管理 | 注册审核 -->
+            <!-- 用户管理页面：子页由侧栏+多标签切换，此处不显示页内 tab 条 -->
             <div id="usersPage" class="page-content">
-                <div class="tabs">
+                <div class="tabs page-inner-tabs-hidden">
                     <button class="tab-btn active" data-tab="usersList" onclick="switchUsersTab('usersList')">用户管理</button>
                     <button class="tab-btn" data-tab="approval" onclick="switchUsersTab('approval')">注册审核</button>
                 </div>
                 <!-- 用户管理子页：仅展示已审核用户 -->
                 <div id="usersListTab" class="tab-content active">
+                    <div id="usersListSection">
                     <div class="page-header">
-                        <button class="btn btn-primary" onclick="showCreateUserModal()">+ 新建用户</button>
+                        <button class="btn btn-primary" onclick="showCreateUserPanel()">+ 新建用户</button>
                         <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteUsers()">批量删除</button>
                         <select id="userStatusFilter" onchange="loadUsers()">
                             <option value="">全部状态</option>
@@ -160,6 +200,47 @@
                             </tbody>
                         </table>
                     </div>
+                    <div id="usersPagination" class="pagination-wrap"></div>
+                    </div>
+                    <!-- 新建/编辑用户：当前页展开，非弹窗 -->
+                    <div id="usersFormSection" class="in-page-form-section" style="display:none">
+                        <div class="in-page-form-header">
+                            <h3 id="usersFormTitle">新建用户</h3>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="hideUserFormPanel()">← 返回列表</button>
+                        </div>
+                        <form id="userFormInPage" class="in-page-form">
+                            <input type="hidden" name="id" id="userFormId" value="">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>用户名</label>
+                                    <input type="text" name="username" id="userFormUsername" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>邮箱</label>
+                                    <input type="email" name="email" id="userFormEmail" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>姓名</label>
+                                    <input type="text" name="full_name" id="userFormFullName">
+                                </div>
+                                <div class="form-group form-group-password">
+                                    <label>密码</label>
+                                    <input type="password" name="password" id="userFormPassword" autocomplete="new-password">
+                                    <small class="form-hint">编辑时留空表示不修改</small>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>分配角色</label>
+                                <div id="userFormRoles" class="assign-permissions-list"></div>
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">保存</button>
+                                <button type="button" class="btn btn-secondary" onclick="hideUserFormPanel()">取消</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
                 <!-- 注册审核子页：待审核用户 -->
                 <div id="approvalTab" class="tab-content">
@@ -184,9 +265,9 @@
                 </div>
             </div>
 
-            <!-- 角色权限管理页面 -->
+            <!-- 角色权限管理页面：子页由侧栏+多标签切换 -->
             <div id="rolesPage" class="page-content">
-                <div class="tabs">
+                <div class="tabs page-inner-tabs-hidden">
                     <button class="tab-btn active" data-tab="roles" onclick="switchTab('roles')">角色管理</button>
                     <button class="tab-btn" data-tab="permissions" onclick="switchTab('permissions')">权限管理</button>
                     <button class="tab-btn" data-tab="resources" onclick="switchTab('resources')">资源管理</button>
@@ -194,87 +275,115 @@
                 
                 <!-- 角色管理 -->
                 <div id="rolesTab" class="tab-content active">
-                    <div class="page-header">
-                        <button class="btn btn-primary" onclick="showCreateRoleModal()">+ 新建角色</button>
-                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteRoles()">批量删除</button>
+                    <div id="rolesListSection">
+                        <div class="page-header">
+                            <button class="btn btn-primary" onclick="showCreateRolePanel()">+ 新建角色</button>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteRoles()">批量删除</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th><input type="checkbox" id="rolesSelectAll" onchange="toggleRolesSelectAll(this)" title="全选"></th>
+                                        <th>ID</th>
+                                        <th>角色名称</th>
+                                        <th>描述</th>
+                                        <th>权限数量</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rolesTableBody">
+                                    <tr><td colspan="6">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th><input type="checkbox" id="rolesSelectAll" onchange="toggleRolesSelectAll(this)" title="全选"></th>
-                                    <th>ID</th>
-                                    <th>角色名称</th>
-                                    <th>描述</th>
-                                    <th>权限数量</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="rolesTableBody">
-                                <tr><td colspan="6">加载中...</td></tr>
-                            </tbody>
-                        </table>
+                    <div id="rolesFormSection" class="in-page-form-section" style="display:none">
+                        <div class="in-page-form-header">
+                            <h3 id="rolesFormTitle">新建角色</h3>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="hideRoleFormPanel()">← 返回列表</button>
+                        </div>
+                        <div id="rolesFormContainer"></div>
                     </div>
                 </div>
 
                 <!-- 权限管理 -->
                 <div id="permissionsTab" class="tab-content">
-                    <div class="page-header">
-                        <button class="btn btn-primary" onclick="showCreatePermissionModal()">+ 新建权限</button>
-                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeletePermissions()">批量删除</button>
+                    <div id="permissionsListSection">
+                        <div class="page-header">
+                            <button class="btn btn-primary" onclick="showCreatePermissionPanel()">+ 新建权限</button>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="batchDeletePermissions()">批量删除</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th><input type="checkbox" id="permissionsSelectAll" onchange="togglePermissionsSelectAll(this)" title="全选"></th>
+                                        <th>ID</th>
+                                        <th>权限代码</th>
+                                        <th>权限名称</th>
+                                        <th>资源ID</th>
+                                        <th>描述</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="permissionsTableBody">
+                                    <tr><td colspan="7">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th><input type="checkbox" id="permissionsSelectAll" onchange="togglePermissionsSelectAll(this)" title="全选"></th>
-                                    <th>ID</th>
-                                    <th>权限代码</th>
-                                    <th>权限名称</th>
-                                    <th>资源ID</th>
-                                    <th>描述</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="permissionsTableBody">
-                                <tr><td colspan="7">加载中...</td></tr>
-                            </tbody>
-                        </table>
+                    <div id="permissionsFormSection" class="in-page-form-section" style="display:none">
+                        <div class="in-page-form-header">
+                            <h3 id="permissionsFormTitle">新建权限</h3>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="hidePermissionFormPanel()">← 返回列表</button>
+                        </div>
+                        <div id="permissionsFormContainer"></div>
                     </div>
                 </div>
 
                 <!-- 资源管理 -->
                 <div id="resourcesTab" class="tab-content">
-                    <div class="page-header">
-                        <button class="btn btn-primary" onclick="showCreateResourceModal()">+ 新建资源</button>
-                        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteResources()">批量删除</button>
+                    <div id="resourcesListSection">
+                        <div class="page-header">
+                            <button class="btn btn-primary" onclick="showCreateResourcePanel()">+ 新建资源</button>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteResources()">批量删除</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th><input type="checkbox" id="resourcesSelectAll" onchange="toggleResourcesSelectAll(this)" title="全选"></th>
+                                        <th>ID</th>
+                                        <th>资源名称</th>
+                                        <th>资源类型</th>
+                                        <th>路径</th>
+                                        <th>方法</th>
+                                        <th>应用ID</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resourcesTableBody">
+                                    <tr><td colspan="8">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th><input type="checkbox" id="resourcesSelectAll" onchange="toggleResourcesSelectAll(this)" title="全选"></th>
-                                    <th>ID</th>
-                                    <th>资源名称</th>
-                                    <th>资源类型</th>
-                                    <th>路径</th>
-                                    <th>方法</th>
-                                    <th>应用ID</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="resourcesTableBody">
-                                <tr><td colspan="8">加载中...</td></tr>
-                            </tbody>
-                        </table>
+                    <div id="resourcesFormSection" class="in-page-form-section" style="display:none">
+                        <div class="in-page-form-header">
+                            <h3 id="resourcesFormTitle">新建资源</h3>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="hideResourceFormPanel()">← 返回列表</button>
+                        </div>
+                        <div id="resourcesFormContainer"></div>
                     </div>
                 </div>
             </div>
 
             <!-- 应用管理页面 -->
             <div id="appsPage" class="page-content">
+                <div id="appsListSection">
                 <div class="page-header">
-                    <button class="btn btn-primary" onclick="showCreateAppModal()">+ 注册应用</button>
+                    <button class="btn btn-primary" onclick="showCreateAppPanel()">+ 注册应用</button>
                     <button class="btn btn-primary" onclick="showBatchRegisterModal()">批量注册应用</button>
                     <select id="appStatusFilter" onchange="loadApps()">
                         <option value="">全部状态</option>
@@ -307,6 +416,14 @@
                             <tr><td colspan="7">加载中...</td></tr>
                         </tbody>
                     </table>
+                </div>
+                </div>
+                <div id="appsFormSection" class="in-page-form-section" style="display:none">
+                    <div class="in-page-form-header">
+                        <h3 id="appsFormTitle">注册应用</h3>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="hideAppFormPanel()">← 返回列表</button>
+                    </div>
+                    <div id="appsFormContainer"></div>
                 </div>
             </div>
 
@@ -356,17 +473,27 @@
                             </tbody>
                         </table>
                     </div>
+                    <div id="sessionsPagination" class="pagination-wrap"></div>
                 </div>
             </div>
 
             <!-- 系统设置页面 -->
             <div id="systemPage" class="page-content">
                 <div class="profile-section">
-                    <h3>注册审核</h3>
-                    <div class="form-group" style="display:flex;align-items:center;gap:12px;">
-                        <label style="margin:0">新用户注册需管理员审核</label>
-                        <input type="checkbox" id="toggleApproval" onchange="toggleRegistrationApproval(this)">
-                        <span id="approvalStatus" class="form-hint"></span>
+                    <h3>注册与审核</h3>
+                    <div class="settings-row-inline">
+                        <label class="settings-label-wrap">
+                            <input type="checkbox" id="toggleAllowRegistration" onchange="toggleAllowRegistration(this)">
+                            <span>允许新用户注册</span>
+                        </label>
+                        <span id="registrationStatus" class="settings-status"></span>
+                    </div>
+                    <div class="settings-row-inline">
+                        <label class="settings-label-wrap">
+                            <input type="checkbox" id="toggleApproval" onchange="toggleRegistrationApproval(this)">
+                            <span>新用户注册需管理员审核</span>
+                        </label>
+                        <span id="approvalStatus" class="settings-status"></span>
                     </div>
                 </div>
                 <div class="profile-section">
@@ -412,7 +539,7 @@
                             <option value="true">成功</option>
                             <option value="false">失败</option>
                         </select>
-                        <button class="btn btn-primary" onclick="loadLogs()">查询</button>
+                        <button class="btn btn-primary" onclick="queryLogs()">查询</button>
                         <button class="btn btn-secondary" onclick="exportLogs()">导出 CSV</button>
                     </div>
                 </div>
@@ -436,6 +563,8 @@
                         </tbody>
                     </table>
                 </div>
+                <div id="logsPagination" class="pagination-wrap"></div>
+            </div>
             </div>
         </main>
     </div>

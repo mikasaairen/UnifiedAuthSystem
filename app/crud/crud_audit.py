@@ -78,6 +78,33 @@ class CRUDAudit(CRUDBase[AuditLog, None, None]):
         if end_time:
             query = query.filter(AuditLog.created_at <= end_time)
         return query.order_by(AuditLog.created_at.desc()).offset(skip).limit(limit).all()
+
+    def get_logs_count(
+        self,
+        db: Session,
+        *,
+        user_id: Optional[int] = None,
+        app_id: Optional[int] = None,
+        action: Optional[str] = None,
+        success: Optional[bool] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None
+    ) -> int:
+        """与 get_logs 相同筛选条件下的总数"""
+        query = db.query(AuditLog)
+        if user_id:
+            query = query.filter(AuditLog.actor_user_id == user_id)
+        if app_id:
+            query = query.filter(AuditLog.app_id == app_id)
+        if action:
+            query = query.filter(AuditLog.action == action)
+        if success is not None:
+            query = query.filter(AuditLog.success == success)
+        if start_time:
+            query = query.filter(AuditLog.created_at >= start_time)
+        if end_time:
+            query = query.filter(AuditLog.created_at <= end_time)
+        return query.count()
     
     def get_stats(
         self,

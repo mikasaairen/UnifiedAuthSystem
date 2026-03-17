@@ -97,6 +97,12 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
+class UserListResponse(BaseModel):
+    """用户列表分页响应"""
+    items: List[UserResponse]
+    total: int
+
+
 class DisableUserRequest(BaseModel):
     """禁用用户请求：可选时长，不传则永久禁用"""
     duration: Optional[str] = None  # 15m, 1h, 1d, 7d, 1month, 1year, permanent

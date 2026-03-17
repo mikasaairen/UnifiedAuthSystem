@@ -38,12 +38,11 @@ class API {
                 if (data.detail != null) {
                     msg = Array.isArray(data.detail) ? data.detail.map(d => d.msg || JSON.stringify(d)).join('；') : String(data.detail);
                 }
-                if (response.status === 401) {
-                    const err = new Error(msg || '未授权');
-                    err.status = 401;
-                    throw err;
-                }
-                throw new Error(msg);
+                const err = new Error(msg || '请求失败');
+                err.status = response.status;
+                if (response.status === 401) err.status = 401;
+                if (response.status === 403) err.status = 403;
+                throw err;
             }
 
             return data;

@@ -24,7 +24,7 @@
                 <button type="submit">登录</button>
                 <div id="error" class="error"></div>
             </form>
-            <p style="text-align: center; margin-top: 20px;">
+            <p id="registerPrompt" style="text-align: center; margin-top: 20px;">
                 还没有账号？<a href="#" onclick="showRegister()">立即注册</a>
             </p>
         </div>
@@ -70,6 +70,15 @@
             document.getElementById('registerSection').style.display = 'none';
             document.getElementById('loginSection').style.display = 'block';
         }
+        // 系统关闭注册时隐藏「立即注册」入口
+        (function() {
+            fetch('/api/v1/system/registration-allowed').then(function(r) { return r.json(); }).then(function(data) {
+                if (data && data.allowed === false) {
+                    var el = document.getElementById('registerPrompt');
+                    if (el) el.style.display = 'none';
+                }
+            }).catch(function() {});
+        })();
     </script>
 </body>
 </html>

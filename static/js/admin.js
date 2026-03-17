@@ -6,6 +6,67 @@ let currentUser = null;
 let isAdmin = false;
 let myPermissionCodes = [];
 
+/** 多标签组状态 */
+var openTabs = [];
+var activeTabId = null;
+var tabIdCounter = 0;
+var PAGE_TITLES = {
+    workbench: '工作台',
+    overview: '概览',
+    usersList: '用户列表',
+    approval: '注册审核',
+    rolesList: '角色管理',
+    permissions: '权限管理',
+    resources: '资源管理',
+    apps: '应用管理',
+    logs: '审计日志',
+    system: '系统设置',
+    profile: '基本资料'
+};
+
+/** 子页面对应主页面（用于多标签下展示同一主页面不同 inner tab） */
+var SUB_PAGE_MAIN = {
+    usersList: 'users',
+    approval: 'users',
+    rolesList: 'roles',
+    permissions: 'roles',
+    resources: 'roles'
+};
+
+/** 各页面所需权限（用于权限变更后关闭无权限标签），null 表示无限制 */
+var PAGE_PERMISSIONS = {
+    workbench: null,
+    overview: null,
+    usersList: 'users:manage',
+    approval: 'users:manage',
+    rolesList: 'rbac:manage',
+    permissions: 'rbac:manage',
+    resources: 'rbac:manage',
+    apps: 'apps:manage',
+    logs: 'logs:view',
+    system: ['users:manage', 'system:manage'],
+    profile: null
+};
+
+/** 概览统计缓存（1 分钟内不重复请求） */
+var overviewCache = { users: null, apps: null, roles: null, todayLogs: null, ts: 0 };
+var OVERVIEW_CACHE_TTL = 60000;
+
+/** 用户列表分页 */
+var usersPageCurrent = 1;
+var usersPageSize = 20;
+var usersTotal = 0;
+
+/** 日志列表分页 */
+var logsPageCurrent = 1;
+var logsPageSize = 20;
+var logsTotal = 0;
+
+/** 个人资料-会话列表分页 */
+var sessionsPageCurrent = 1;
+var sessionsPageSize = 10;
+var sessionsAll = [];
+
 document.addEventListener('DOMContentLoaded', async function() {
     const token = localStorage.getItem('access_token');
     if (!token) {
@@ -16,7 +77,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadCurrentUser();
 
     initNavigation();
-    loadOverview();
+    initTabsDropdown();
+    initUserSearchDebounce();
+    initUserFormInPage();
+    // 默认打开概览标签
+    openOrActivateTab('overview');
 });
 
 function hasAdminRole(user) {
@@ -38,95 +103,178 @@ async function loadCurrentUser() {
         if (userInfoTopbar) {
             userInfoTopbar.innerHTML = `<strong>${currentUser.full_name || currentUser.username}</strong><span class="topbar-role">${roleDisplayName(currentUser)}</span>`;
         }
-        const profileBtn = document.getElementById('profileTopbarBtn');
+        var profileBtn = document.getElementById('profileTopbarBtn');
         if (profileBtn && !profileBtn._bound) {
             profileBtn._bound = true;
-            profileBtn.addEventListener('click', openProfileModal);
+            profileBtn.addEventListener('click', function() { openOrActivateTab('profile'); });
         }
 
-        // 拉取当前用户权限列表，用于控制导航可见性（仅按角色权限，不再使用 is_admin）
-        try {
-            const res = await API.get('/rbac/me/permissions');
-            myPermissionCodes = Array.isArray(res.permission_codes) ? res.permission_codes : [];
-        } catch (e) {
-            myPermissionCodes = [];
-        }
-
-        applyNavVisibility();
+        await refreshPermissions();
     } catch (error) {
         console.error('加载用户信息失败:', error);
-        if (error.status === 401 || error.message.includes('401')) {
+        if (error && error.status === 401) {
             localStorage.removeItem('access_token');
             window.location.href = '/login';
         }
     }
 }
 
+function handle403(err) {
+    if (err && err.status === 403) {
+        refreshPermissions();
+        showMessage('权限已变更，请重试或刷新页面', 'error');
+    }
+}
+
+/** 检查用户是否拥有某页面所需权限 */
+function hasPagePermission(pageName) {
+    var need = PAGE_PERMISSIONS[pageName];
+    if (need == null) return true;
+    if (Array.isArray(need)) return need.some(function(c) { return myPermissionCodes && myPermissionCodes.indexOf(c) !== -1; });
+    return myPermissionCodes && myPermissionCodes.indexOf(need) !== -1;
+}
+
+/** 刷新权限并更新侧栏与标签（权限变更后调用） */
+async function refreshPermissions() {
+    try {
+        var res = await API.get('/rbac/me/permissions');
+        myPermissionCodes = Array.isArray(res.permission_codes) ? res.permission_codes : [];
+    } catch (e) {
+        myPermissionCodes = [];
+    }
+    applyNavVisibility();
+    var toClose = [];
+    openTabs.forEach(function(t) {
+        if (!hasPagePermission(t.pageName)) toClose.push(t.id);
+    });
+    toClose.forEach(function(id) { closeTab(id); });
+    if (toClose.length > 0) renderTabs();
+}
+
 function applyNavVisibility() {
-    const map = {
-        users: 'users:manage',
-        roles: 'rbac:manage',
+    var map = {
+        usersList: 'users:manage',
+        approval: 'users:manage',
+        rolesList: 'rbac:manage',
+        permissions: 'rbac:manage',
+        resources: 'rbac:manage',
         apps: 'apps:manage',
         logs: 'logs:view',
-        system: 'system:manage',
+        system: ['users:manage', 'system:manage']
     };
+    var anySystemVisible = false;
     Object.keys(map).forEach(function(page) {
-        const items = document.querySelectorAll('.nav-item[data-page="' + page + '"]');
-        const needCode = map[page];
-        let visible = false;
-        if (myPermissionCodes && myPermissionCodes.indexOf(needCode) !== -1) {
-            visible = true;
+        var items = document.querySelectorAll('.nav-item[data-page="' + page + '"]');
+        var needCode = map[page];
+        var visible = false;
+        if (myPermissionCodes) {
+            if (Array.isArray(needCode)) visible = needCode.some(function(c) { return myPermissionCodes.indexOf(c) !== -1; });
+            else visible = myPermissionCodes.indexOf(needCode) !== -1;
         }
+        if (visible) anySystemVisible = true;
         items.forEach(function(el) {
             el.style.display = visible ? '' : 'none';
         });
     });
+    var group = document.querySelector('.nav-group[data-group="system"]');
+    if (group) group.style.display = anySystemVisible ? '' : 'none';
+    var usersGroup = document.querySelector('.nav-group[data-group="users"]');
+    if (usersGroup) usersGroup.style.display = (map.usersList && myPermissionCodes && myPermissionCodes.indexOf('users:manage') !== -1) ? '' : 'none';
+    var rolesGroup = document.querySelector('.nav-group[data-group="roles"]');
+    if (rolesGroup) rolesGroup.style.display = (map.rolesList && myPermissionCodes && myPermissionCodes.indexOf('rbac:manage') !== -1) ? '' : 'none';
 }
 
 function initNavigation() {
-    document.querySelectorAll('.nav-item').forEach(item => {
+    document.querySelectorAll('.nav-group-toggle').forEach(function(toggle) {
+        toggle.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var group = toggle.closest('.nav-group');
+            if (group) group.classList.toggle('expanded');
+        });
+    });
+    document.querySelectorAll('.nav-item').forEach(function(item) {
         item.addEventListener('click', function(e) {
             e.preventDefault();
-            const page = this.getAttribute('data-page');
-            switchPage(page);
+            var page = this.getAttribute('data-page');
+            if (page) openOrActivateTab(page);
         });
+    });
+    var systemGroup = document.querySelector('.nav-group[data-group="system"]');
+    if (systemGroup) systemGroup.classList.add('expanded');
+    document.querySelectorAll('.nav-group[data-group="users"], .nav-group[data-group="roles"]').forEach(function(g) {
+        g.classList.add('expanded');
     });
 }
 
-function switchPage(pageName) {
-    document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-    const activeNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
-    if (activeNav) activeNav.classList.add('active');
+/** 打开或切换到指定页面对应的标签 */
+function openOrActivateTab(pageName) {
+    var existing = openTabs.find(function(t) { return t.pageName === pageName; });
+    if (existing) {
+        setActiveTab(existing.id);
+        return;
+    }
+    tabIdCounter++;
+    var tab = { id: tabIdCounter, pageName: pageName, title: PAGE_TITLES[pageName] || pageName };
+    openTabs.push(tab);
+    renderTabs();
+    setActiveTab(tab.id);
+    loadPageData(pageName);
+}
 
-    const titles = {
-        'workbench': '工作台',
-        'overview': '概览',
-        'users': '用户管理',
-        'roles': '角色权限管理',
-        'apps': '应用管理',
-        'logs': '审计日志',
-        'system': '系统设置'
-    };
-    const titleEl = document.getElementById('pageTitle');
-    if (titleEl) titleEl.textContent = titles[pageName] || '概览';
+/** 切换到指定标签并显示对应内容 */
+function setActiveTab(tabId) {
+    activeTabId = tabId;
+    var tab = openTabs.find(function(t) { return t.id === tabId; });
+    if (!tab) return;
 
-    document.querySelectorAll('.page-content').forEach(page => page.classList.remove('active'));
-    const pageEl = document.getElementById(`${pageName}Page`);
+    var mainPageName = SUB_PAGE_MAIN[tab.pageName] || tab.pageName;
+    var pageEl = document.getElementById(mainPageName + 'Page');
+    document.querySelectorAll('.page-content').forEach(function(p) { p.classList.remove('active'); });
     if (pageEl) pageEl.classList.add('active');
 
-    switch(pageName) {
+    if (tab.pageName === 'usersList' || tab.pageName === 'approval') {
+        switchUsersTab(tab.pageName);
+    } else if (tab.pageName === 'rolesList' || tab.pageName === 'permissions' || tab.pageName === 'resources') {
+        switchTab(tab.pageName === 'rolesList' ? 'roles' : tab.pageName);
+    }
+
+    document.querySelectorAll('.main-tab').forEach(function(t) { t.classList.remove('active'); });
+    var tabEl = document.querySelector('.main-tab[data-tab-id="' + tabId + '"]');
+    if (tabEl) tabEl.classList.add('active');
+
+    var titleEl = document.getElementById('pageTitle');
+    if (titleEl) titleEl.textContent = tab.title;
+
+    document.querySelectorAll('.nav-item').forEach(function(n) { n.classList.remove('active'); });
+    var nav = document.querySelector('.nav-item[data-page="' + tab.pageName + '"]');
+    if (nav) nav.classList.add('active');
+}
+
+/** 加载指定页面的数据（仅在新开标签时调用） */
+function loadPageData(pageName) {
+    switch (pageName) {
         case 'workbench':
             loadWorkbench();
             break;
         case 'overview':
             loadOverview();
             break;
-        case 'users':
+        case 'usersList':
             loadUserRoleFilterOptions();
-            switchUsersTab(document.querySelector('#usersPage .tab-btn.active')?.getAttribute('data-tab') || 'usersList');
+            loadUsers();
             break;
-        case 'roles':
+        case 'approval':
+            loadPendingUsers();
+            break;
+        case 'rolesList':
             loadRoles();
+            break;
+        case 'permissions':
+            loadPermissions();
+            break;
+        case 'resources':
+            loadResources();
             break;
         case 'apps':
             loadApps();
@@ -137,7 +285,132 @@ function switchPage(pageName) {
         case 'system':
             loadSystemSettings();
             break;
+        case 'profile':
+            loadProfilePageData();
+            break;
+        default:
+            break;
     }
+}
+
+/** 渲染标签栏（支持拖拽排序） */
+function renderTabs() {
+    var list = document.getElementById('mainTabsList');
+    if (!list) return;
+    list.innerHTML = openTabs.map(function(t) {
+        var isActive = t.id === activeTabId;
+        return '<div class="main-tab' + (isActive ? ' active' : '') + '" data-tab-id="' + t.id + '" data-page="' + t.pageName + '" draggable="true">' +
+            '<span class="main-tab-title">' + escapeHtml(t.title) + '</span>' +
+            '<button type="button" class="main-tab-close" aria-label="关闭">×</button></div>';
+    }).join('');
+
+    list.querySelectorAll('.main-tab').forEach(function(el) {
+        var id = parseInt(el.getAttribute('data-tab-id'), 10);
+        el.addEventListener('click', function(e) {
+            if (!e.target.classList.contains('main-tab-close')) setActiveTab(id);
+        });
+        var closeBtn = el.querySelector('.main-tab-close');
+        if (closeBtn) closeBtn.addEventListener('click', function(e) { e.stopPropagation(); closeTab(id); });
+        el.addEventListener('dragstart', function(e) {
+            e.dataTransfer.setData('text/plain', id);
+            e.dataTransfer.effectAllowed = 'move';
+            el.classList.add('tab-dragging');
+        });
+        el.addEventListener('dragend', function() { el.classList.remove('tab-dragging'); });
+        el.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            var targetId = parseInt(el.getAttribute('data-tab-id'), 10);
+            if (targetId !== id) el.classList.add('tab-drag-over');
+        });
+        el.addEventListener('dragleave', function() { el.classList.remove('tab-drag-over'); });
+        el.addEventListener('drop', function(e) {
+            e.preventDefault();
+            el.classList.remove('tab-drag-over');
+            var fromId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            if (fromId === id) return;
+            var fromIdx = openTabs.findIndex(function(t) { return t.id === fromId; });
+            var toIdx = openTabs.findIndex(function(t) { return t.id === id; });
+            if (fromIdx === -1 || toIdx === -1) return;
+            var tab = openTabs.splice(fromIdx, 1)[0];
+            openTabs.splice(toIdx, 0, tab);
+            renderTabs();
+        });
+    });
+}
+
+/** 关闭标签 */
+function closeTab(tabId) {
+    var idx = openTabs.findIndex(function(t) { return t.id === tabId; });
+    if (idx === -1) return;
+    var wasActive = activeTabId === tabId;
+    openTabs.splice(idx, 1);
+    if (openTabs.length === 0) {
+        openOrActivateTab('overview');
+        return;
+    }
+    if (wasActive) {
+        var nextIdx = Math.min(idx, openTabs.length - 1);
+        if (nextIdx < 0) nextIdx = 0;
+        setActiveTab(openTabs[nextIdx].id);
+    }
+    renderTabs();
+}
+
+/** 关闭当前标签 */
+function closeCurrentTab() {
+    if (activeTabId == null) return;
+    closeTab(activeTabId);
+    closeTabsDropdown();
+}
+
+/** 关闭其他标签（保留当前） */
+function closeOtherTabs() {
+    var current = openTabs.find(function(t) { return t.id === activeTabId; });
+    if (!current) return;
+    openTabs.length = 0;
+    openTabs.push(current);
+    renderTabs();
+    closeTabsDropdown();
+}
+
+/** 关闭全部标签（回到概览） */
+function closeAllTabs() {
+    openTabs.length = 0;
+    openOrActivateTab('overview');
+    renderTabs();
+    closeTabsDropdown();
+}
+
+function closeTabsDropdown() {
+    var dd = document.getElementById('tabsDropdown');
+    var btn = document.getElementById('tabsDropdownBtn');
+    if (dd) { dd.classList.remove('open'); dd.setAttribute('aria-hidden', 'true'); }
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function initTabsDropdown() {
+    var btn = document.getElementById('tabsDropdownBtn');
+    var dd = document.getElementById('tabsDropdown');
+    if (!btn || !dd) return;
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var isOpen = dd.classList.toggle('open');
+        btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        dd.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+    });
+    dd.querySelectorAll('[data-action]').forEach(function(item) {
+        item.addEventListener('click', function() {
+            var action = item.getAttribute('data-action');
+            if (action === 'closeCurrent') closeCurrentTab();
+            else if (action === 'closeOthers') closeOtherTabs();
+            else if (action === 'closeAll') closeAllTabs();
+        });
+    });
+    document.addEventListener('click', function(e) {
+        if (dd.contains(e.target) || btn.contains(e.target)) return;
+        closeTabsDropdown();
+    });
 }
 
 async function loadWorkbench() {
@@ -167,6 +440,7 @@ async function loadWorkbench() {
     } catch (e) {
         console.error('加载工作台失败:', e);
         gridEl.innerHTML = '<p class="workbench-loading">加载失败，请稍后重试。</p>';
+        handle403(e);
     }
 }
 
@@ -204,6 +478,22 @@ function isUserLocked(user) {
 let loginTrendChartInstance = null;
 let actionPieChartInstance = null;
 
+function getTodayBeijingDateString() {
+    var s = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Shanghai' });
+    return s.split(',')[0].trim();
+}
+
+function loadChartJs() {
+    if (window.Chart) return Promise.resolve();
+    return new Promise(function(resolve, reject) {
+        var script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+}
+
 async function loadOverview() {
     var codes = myPermissionCodes || [];
     var grid = document.getElementById('overviewStatsGrid');
@@ -216,37 +506,70 @@ async function loadOverview() {
     document.querySelectorAll('[data-permission]').forEach(function(el) {
         if (el.closest('#overviewStatsGrid')) return;
         var perm = el.getAttribute('data-permission');
-        el.style.display = (perm && codes.indexOf(perm) !== -1) ? '' : 'none';
+        if (!perm) return;
+        var allowed = perm.split(/\s+/).some(function(p) { return codes.indexOf(p.trim()) !== -1; });
+        el.style.display = allowed ? '' : 'none';
     });
+
+    var now = Date.now();
+    var useCache = (now - overviewCache.ts) < OVERVIEW_CACHE_TTL;
 
     async function fetchUsers() {
         if (codes.indexOf('users:manage') === -1) return;
-        var users = await API.get('/users/');
+        if (useCache && overviewCache.users !== null) {
+            var el = document.getElementById('totalUsers');
+            if (el) el.textContent = overviewCache.users;
+            return;
+        }
+        var res = await API.get('/users/?limit=1&skip=0&scope=managed');
+        var count = (res && typeof res.total === 'number') ? res.total : (res && res.items ? res.items.length : 0);
+        overviewCache.users = count;
+        overviewCache.ts = now;
         var el = document.getElementById('totalUsers');
-        if (el) el.textContent = Array.isArray(users) ? users.length : 0;
+        if (el) el.textContent = count;
     }
     async function fetchApps() {
         if (codes.indexOf('apps:manage') === -1) return;
+        if (useCache && overviewCache.apps !== null) {
+            var el = document.getElementById('totalApps');
+            if (el) el.textContent = overviewCache.apps;
+            return;
+        }
         var apps = await API.get('/apps/');
+        var count = Array.isArray(apps) ? apps.length : 0;
+        overviewCache.apps = count;
+        overviewCache.ts = now;
         var el = document.getElementById('totalApps');
-        if (el) el.textContent = Array.isArray(apps) ? apps.length : 0;
+        if (el) el.textContent = count;
     }
     async function fetchRoles() {
         if (codes.indexOf('rbac:manage') === -1) return;
+        if (useCache && overviewCache.roles !== null) {
+            var el = document.getElementById('totalRoles');
+            if (el) el.textContent = overviewCache.roles;
+            return;
+        }
         var roles = await API.get('/rbac/roles');
+        var count = Array.isArray(roles) ? roles.length : 0;
+        overviewCache.roles = count;
+        overviewCache.ts = now;
         var el = document.getElementById('totalRoles');
-        if (el) el.textContent = Array.isArray(roles) ? roles.length : 0;
+        if (el) el.textContent = count;
     }
     async function fetchLogs() {
         if (codes.indexOf('logs:view') === -1) return;
-        var logs = await API.get('/logs/');
-        var el = document.getElementById('todayLogs');
-        if (el) {
-            var today = new Date();
-            today.setHours(0, 0, 0, 0);
-            var todayLogs = Array.isArray(logs) ? logs.filter(function(log) { return new Date(log.created_at) >= today; }) : [];
-            el.textContent = todayLogs.length;
+        if (useCache && overviewCache.todayLogs !== null) {
+            var el = document.getElementById('todayLogs');
+            if (el) el.textContent = overviewCache.todayLogs;
+            return;
         }
+        var today = getTodayBeijingDateString();
+        var stats = await API.get('/logs/stats?start_time=' + encodeURIComponent(today) + '&end_time=' + encodeURIComponent(today));
+        var count = (stats && typeof stats.total === 'number') ? stats.total : 0;
+        overviewCache.todayLogs = count;
+        overviewCache.ts = now;
+        var el = document.getElementById('todayLogs');
+        if (el) el.textContent = count;
     }
 
     var promises = [fetchUsers(), fetchApps(), fetchRoles(), fetchLogs()];
@@ -254,11 +577,12 @@ async function loadOverview() {
     if (codes.indexOf('logs:view') !== -1) {
         var chartsRow = document.getElementById('overviewChartsRow');
         if (chartsRow && chartsRow.style.display !== 'none') {
-            promises.push(loadLoginTrendChart());
-            promises.push(loadActionPieChart());
+            promises.push(loadChartJs().then(function() {
+                return Promise.all([loadLoginTrendChart(), loadActionPieChart()]);
+            }));
         }
     }
-    if (codes.indexOf('users:manage') !== -1) {
+    if (codes.indexOf('users:manage') !== -1 || codes.indexOf('system:manage') !== -1) {
         promises.push(loadSecurityOverview());
     }
 
@@ -266,6 +590,7 @@ async function loadOverview() {
         await Promise.allSettled(promises);
     } catch (e) {
         console.error('加载概览数据失败:', e);
+        handle403(e);
     }
 }
 
@@ -414,33 +739,41 @@ async function loadUserRoleFilterOptions() {
 }
 
 async function loadUsers() {
-    const feedbackEl = document.getElementById('userSearchFeedback');
-    const tbody = document.getElementById('usersTableBody');
+    var feedbackEl = document.getElementById('userSearchFeedback');
+    var tbody = document.getElementById('usersTableBody');
+    var paginationEl = document.getElementById('usersPagination');
     if (!tbody) return;
     try {
         tbody.innerHTML = '<tr><td colspan="8">加载中...</td></tr>';
-        const keyword = document.getElementById('userSearch')?.value?.trim();
-        const statusFilter = document.getElementById('userStatusFilter')?.value;
-        const roleFilter = document.getElementById('userRoleFilter')?.value;
-        let url = '/users/?limit=500&scope=managed';
+        if (paginationEl) paginationEl.innerHTML = '';
+        var keyword = document.getElementById('userSearch') && document.getElementById('userSearch').value ? document.getElementById('userSearch').value.trim() : '';
+        var statusFilter = document.getElementById('userStatusFilter') && document.getElementById('userStatusFilter').value ? document.getElementById('userStatusFilter').value : '';
+        var roleFilter = document.getElementById('userRoleFilter') && document.getElementById('userRoleFilter').value ? document.getElementById('userRoleFilter').value.trim() : '';
+        var skip = (usersPageCurrent - 1) * usersPageSize;
+        var url = '/users/?limit=' + usersPageSize + '&skip=' + skip + '&scope=managed';
         if (statusFilter === 'active') url += '&is_active=true';
         else if (statusFilter === 'disabled') url += '&is_active=false';
         if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
-        if (roleFilter && roleFilter.trim()) url += '&role_name=' + encodeURIComponent(roleFilter.trim());
-        const users = await API.get(url);
+        if (roleFilter) url += '&role_name=' + encodeURIComponent(roleFilter);
+        var res = await API.get(url);
+        var list = res && res.items ? res.items : [];
+        var total = (res && typeof res.total === 'number') ? res.total : 0;
+        var maxPage = Math.max(1, Math.ceil(total / usersPageSize));
         if (feedbackEl) {
             if (keyword) {
-                feedbackEl.textContent = users.length === 0 ? '未找到匹配用户，请调整关键词' : '共 ' + users.length + ' 条结果';
+                feedbackEl.textContent = list.length === 0 ? '未找到匹配用户，请调整关键词' : '第 ' + (skip + 1) + '-' + (skip + list.length) + ' 条，共 ' + total + ' 条';
             } else {
-                feedbackEl.textContent = users.length === 0 ? '暂无用户' : '共 ' + users.length + ' 名用户';
+                feedbackEl.textContent = list.length === 0 ? '暂无用户' : '第 ' + (skip + 1) + '-' + (skip + list.length) + ' 条，共 ' + total + ' 条';
             }
         }
-        if (users.length === 0) {
+        if (list.length === 0) {
             tbody.innerHTML = '<tr><td colspan="8">暂无用户</td></tr>';
+            if (paginationEl) renderPaginationBar(paginationEl, usersPageCurrent, maxPage, usersPageGo);
             return;
         }
-        document.getElementById('usersSelectAll').checked = false;
-        tbody.innerHTML = users.map(user => {
+        var usersSelectAll = document.getElementById('usersSelectAll');
+        if (usersSelectAll) usersSelectAll.checked = false;
+        tbody.innerHTML = list.map(user => {
             var status = formatUserStatus(user);
             var locked = isUserLocked(user);
             var op = locked
@@ -454,13 +787,77 @@ async function loadUsers() {
                 '<td>' + escapeHtml(user.full_name || '-') + '</td>' +
                 '<td><span class="badge ' + status.badge + '">' + escapeHtml(status.text) + '</span></td>' +
                 '<td>' + (user.roles && user.roles.length ? user.roles.map(function(r){ return r.name; }).join('、') : '无角色') + '</td>' +
-                '<td><button class="btn btn-sm btn-primary" onclick="editUser(' + user.id + ')">编辑</button> ' + op + ' <button class="btn btn-sm btn-danger" onclick="deleteUser(' + user.id + ')">删除</button></td>' +
+                '<td><button class="btn btn-sm btn-primary" onclick="showEditUserPanel(' + user.id + ')">编辑</button> ' + op + ' <button class="btn btn-sm btn-danger" onclick="deleteUser(' + user.id + ')">删除</button></td>' +
                 '</tr>';
         }).join('');
+        if (paginationEl) renderPaginationBar(paginationEl, usersPageCurrent, maxPage, usersPageGo);
     } catch (error) {
         console.error('加载用户列表失败:', error);
         if (feedbackEl) feedbackEl.textContent = '加载失败';
         if (tbody) tbody.innerHTML = '<tr><td colspan="8">加载失败</td></tr>';
+        handle403(error);
+    }
+}
+
+function usersPageGo(page) {
+    if (page < 1) return;
+    usersPageCurrent = page;
+    loadUsers();
+}
+
+/**
+ * 通用分页条：相邻5页、跳转输入、显示最大页；过大跳最后一页，过小跳第一页
+ * @param {HTMLElement} container - 挂载容器
+ * @param {number} currentPage - 当前页
+ * @param {number} maxPage - 最大页
+ * @param {function(number)} onPageChange - 跳页回调
+ */
+function renderPaginationBar(container, currentPage, maxPage, onPageChange) {
+    if (!container) return;
+    if (maxPage < 1) maxPage = 1;
+    var cur = Math.max(1, Math.min(currentPage, maxPage));
+    var start = Math.max(1, cur - 2);
+    var end = Math.min(maxPage, cur + 2);
+    if (end - start + 1 < 5) {
+        if (start === 1) end = Math.min(maxPage, start + 4);
+        else end = Math.min(maxPage, cur + (5 - (cur - start)) - 1);
+        start = Math.max(1, end - 4);
+    }
+    var parts = [];
+    parts.push('<button type="button" class="btn btn-sm btn-secondary" data-page="1">首页</button>');
+    parts.push('<button type="button" class="btn btn-sm btn-secondary" data-page="' + (cur - 1) + '">上一页</button>');
+    for (var p = start; p <= end; p++) {
+        var cls = 'btn btn-sm btn-secondary pagination-num' + (p === cur ? ' current' : '');
+        parts.push('<button type="button" class="' + cls + '" data-page="' + p + '">' + p + '</button>');
+    }
+    parts.push('<button type="button" class="btn btn-sm btn-secondary" data-page="' + (cur + 1) + '">下一页</button>');
+    parts.push('<span class="pagination-info">共 ' + maxPage + ' 页</span>');
+    parts.push('<span class="pagination-jump">跳至 <input type="number" class="pagination-jump-input" min="1" max="' + maxPage + '" value="' + cur + '"> 页</span>');
+    container.innerHTML = '<div class="pagination-bar">' + parts.join('') + '</div>';
+    container.querySelectorAll('.pagination-bar button[data-page]').forEach(function(btn) {
+        var p = parseInt(btn.getAttribute('data-page'), 10);
+        btn.addEventListener('click', function() {
+            if (p < 1) p = 1;
+            if (p > maxPage) p = maxPage;
+            onPageChange(p);
+        });
+    });
+    var jumpInput = container.querySelector('.pagination-jump-input');
+    if (jumpInput) {
+        jumpInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var val = parseInt(jumpInput.value, 10);
+                if (isNaN(val) || val < 1) val = 1;
+                if (val > maxPage) val = maxPage;
+                onPageChange(val);
+            }
+        });
+        jumpInput.addEventListener('change', function() {
+            var val = parseInt(jumpInput.value, 10);
+            if (isNaN(val) || val < 1) val = 1;
+            if (val > maxPage) val = maxPage;
+            onPageChange(val);
+        });
     }
 }
 
@@ -469,8 +866,9 @@ async function loadPendingUsers() {
     if (!tbody) return;
     try {
         tbody.innerHTML = '<tr><td colspan="6">加载中...</td></tr>';
-        var users = await API.get('/users/?limit=500&scope=pending');
-        if (!users || users.length === 0) {
+        var res = await API.get('/users/?limit=500&skip=0&scope=pending');
+        var users = res && res.items ? res.items : [];
+        if (!users.length) {
             tbody.innerHTML = '<tr><td colspan="6">暂无待审核用户</td></tr>';
             return;
         }
@@ -488,6 +886,7 @@ async function loadPendingUsers() {
     } catch (e) {
         console.error('加载待审核列表失败:', e);
         tbody.innerHTML = '<tr><td colspan="6">加载失败</td></tr>';
+        handle403(e);
     }
 }
 
@@ -514,7 +913,131 @@ async function rejectUser(userId) {
 }
 
 function searchUsers() {
+    usersPageCurrent = 1;
     loadUsers();
+}
+
+function initUserSearchDebounce() {
+    var input = document.getElementById('userSearch');
+    if (!input || input._debounceBound) return;
+    input._debounceBound = true;
+    var timer;
+    input.addEventListener('input', function() {
+        clearTimeout(timer);
+        timer = setTimeout(function() {
+            usersPageCurrent = 1;
+            loadUsers();
+        }, 300);
+    });
+}
+
+function hideUserFormPanel() {
+    var listSec = document.getElementById('usersListSection');
+    var formSec = document.getElementById('usersFormSection');
+    if (listSec) listSec.style.display = '';
+    if (formSec) formSec.style.display = 'none';
+}
+
+async function showCreateUserPanel() {
+    var listSec = document.getElementById('usersListSection');
+    var formSec = document.getElementById('usersFormSection');
+    var titleEl = document.getElementById('usersFormTitle');
+    var form = document.getElementById('userFormInPage');
+    if (!form || !formSec) return;
+    var roles = [];
+    try {
+        roles = await API.get('/rbac/roles');
+    } catch (e) { roles = []; }
+    var rolesContainer = document.getElementById('userFormRoles');
+    if (rolesContainer) {
+        rolesContainer.innerHTML = roles.length === 0
+            ? '<p class="form-hint">暂无角色</p>'
+            : roles.map(function(r) {
+                return '<label class="assign-perm-item"><input type="checkbox" name="role_id" value="' + r.id + '"><span class="assign-perm-label">' + escapeHtml(r.name) + (r.description ? '（' + escapeHtml(r.description) + '）' : '') + '</span></label>';
+            }).join('');
+    }
+    if (titleEl) titleEl.textContent = '新建用户';
+    form.querySelector('#userFormId').value = '';
+    form.querySelector('#userFormUsername').value = '';
+    form.querySelector('#userFormUsername').removeAttribute('readonly');
+    form.querySelector('#userFormEmail').value = '';
+    form.querySelector('#userFormFullName').value = '';
+    form.querySelector('#userFormPassword').value = '';
+    form.querySelector('#userFormPassword').setAttribute('required', 'required');
+    if (listSec) listSec.style.display = 'none';
+    formSec.style.display = 'block';
+}
+
+async function showEditUserPanel(userId) {
+    var listSec = document.getElementById('usersListSection');
+    var formSec = document.getElementById('usersFormSection');
+    var titleEl = document.getElementById('usersFormTitle');
+    var form = document.getElementById('userFormInPage');
+    if (!form || !formSec) return;
+    try {
+        var user = await API.get('/users/' + userId);
+        var roles = await API.get('/rbac/roles');
+        var userRoleIds = (user.roles || []).map(function(r) { return r.id; });
+        var rolesContainer = document.getElementById('userFormRoles');
+        if (rolesContainer) {
+            rolesContainer.innerHTML = roles.length === 0
+                ? '<p class="form-hint">暂无角色</p>'
+                : roles.map(function(r) {
+                    var checked = userRoleIds.indexOf(r.id) >= 0 ? ' checked' : '';
+                    return '<label class="assign-perm-item"><input type="checkbox" name="role_id" value="' + r.id + '"' + checked + '><span class="assign-perm-label">' + escapeHtml(r.name) + (r.description ? '（' + escapeHtml(r.description) + '）' : '') + '</span></label>';
+                }).join('');
+        }
+        if (titleEl) titleEl.textContent = '编辑用户';
+        form.querySelector('#userFormId').value = user.id;
+        form.querySelector('#userFormUsername').value = user.username || '';
+        form.querySelector('#userFormUsername').setAttribute('readonly', 'readonly');
+        form.querySelector('#userFormEmail').value = user.email || '';
+        form.querySelector('#userFormFullName').value = user.full_name || '';
+        form.querySelector('#userFormPassword').value = '';
+        form.querySelector('#userFormPassword').removeAttribute('required');
+        if (listSec) listSec.style.display = 'none';
+        formSec.style.display = 'block';
+    } catch (e) {
+        showMessage('加载用户信息失败', 'error');
+    }
+}
+
+function initUserFormInPage() {
+    var form = document.getElementById('userFormInPage');
+    if (!form || form._inPageBound) return;
+    form._inPageBound = true;
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var idEl = form.querySelector('#userFormId');
+        var userId = idEl && idEl.value ? idEl.value.trim() : '';
+        var roleIds = Array.from(form.querySelectorAll('input[name="role_id"]:checked')).map(function(cb) { return parseInt(cb.value, 10); });
+        var username = form.querySelector('#userFormUsername').value.trim();
+        var email = form.querySelector('#userFormEmail').value.trim();
+        var fullName = (form.querySelector('#userFormFullName').value || '').trim();
+        var password = (form.querySelector('#userFormPassword').value || '').trim();
+        try {
+            if (userId) {
+                var data = { email: email, full_name: fullName };
+                if (password) data.password = password;
+                await API.put('/users/' + userId, data);
+                await API.post('/rbac/users/' + userId + '/roles', { role_ids: roleIds });
+                showMessage('用户已更新', 'success');
+            } else {
+                await API.post('/users/', {
+                    username: username,
+                    email: email,
+                    full_name: fullName,
+                    password: password,
+                    role_ids: roleIds
+                });
+                showMessage('用户创建成功', 'success');
+            }
+            hideUserFormPanel();
+            loadUsers();
+        } catch (err) {
+            showMessage('操作失败: ' + (err.message || ''), 'error');
+        }
+    });
 }
 
 function toggleUsersSelectAll(checkbox) {
@@ -751,20 +1274,27 @@ async function loadRoles() {
                 <td>${role.description || '-'}</td>
                 <td>${role.permission_count != null ? role.permission_count : (role.permissions ? role.permissions.length : 0)}</td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="editRole(${role.id})">编辑</button>
-                    <button class="btn btn-sm btn-info" onclick="assignPermissions(${role.id})">分配权限</button>
+                    <button class="btn btn-sm btn-primary" onclick="showEditRolePanel(${role.id})">编辑</button>
+                    <button class="btn btn-sm btn-info" onclick="showAssignPermissionsPanel(${role.id})">分配权限</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteRole(${role.id})">删除</button>
                 </td>
             </tr>
         `).join('');
     } catch (error) {
         console.error('加载角色列表失败:', error);
+        handle403(error);
     }
 }
 
-function showCreateRoleModal() {
-    showModal('创建角色', `
-        <form id="createRoleForm">
+function showCreateRolePanel() {
+    var listEl = document.getElementById('rolesListSection');
+    var formEl = document.getElementById('rolesFormSection');
+    var titleEl = document.getElementById('rolesFormTitle');
+    var container = document.getElementById('rolesFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '新建角色';
+    container.innerHTML = `
+        <form id="createRoleFormInPage">
             <div class="form-group">
                 <label>角色名称</label>
                 <input type="text" name="name" required>
@@ -773,21 +1303,145 @@ function showCreateRoleModal() {
                 <label>描述</label>
                 <textarea name="description"></textarea>
             </div>
-            <div class="modal-actions">
+            <div class="form-actions">
                 <button type="submit" class="btn btn-primary">创建</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                <button type="button" class="btn btn-secondary" onclick="hideRoleFormPanel()">取消</button>
             </div>
         </form>
-    `, async (form) => {
-        const formData = new FormData(form);
-        await API.post('/rbac/roles', {
-            name: formData.get('name'),
-            description: formData.get('description')
-        });
-        closeModal();
-        loadRoles();
-        showMessage('角色创建成功', 'success');
+    `;
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    container.querySelector('#createRoleFormInPage').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var form = e.target;
+        var formData = new FormData(form);
+        try {
+            await API.post('/rbac/roles', { name: formData.get('name'), description: formData.get('description') });
+            hideRoleFormPanel();
+            loadRoles();
+            showMessage('角色创建成功', 'success');
+        } catch (err) {
+            showMessage('创建失败: ' + (err.message || ''), 'error');
+        }
     });
+}
+
+function hideRoleFormPanel() {
+    var listEl = document.getElementById('rolesListSection');
+    var formEl = document.getElementById('rolesFormSection');
+    if (listEl) listEl.style.display = '';
+    if (formEl) formEl.style.display = 'none';
+}
+
+function showEditRolePanel(roleId) {
+    var listEl = document.getElementById('rolesListSection');
+    var formEl = document.getElementById('rolesFormSection');
+    var titleEl = document.getElementById('rolesFormTitle');
+    var container = document.getElementById('rolesFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '编辑角色';
+    container.innerHTML = '<p class="workbench-loading">加载中...</p>';
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    API.get('/rbac/roles/' + roleId).then(function(role) {
+        container.innerHTML = `
+            <form id="editRoleFormInPage">
+                <div class="form-group">
+                    <label>角色名称</label>
+                    <input type="text" name="name" value="${(role.name || '').replace(/"/g, '&quot;')}" required>
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea name="description">${(role.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button type="button" class="btn btn-secondary" onclick="hideRoleFormPanel()">取消</button>
+                </div>
+            </form>
+        `;
+        container.querySelector('#editRoleFormInPage').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var form = e.target;
+            var formData = new FormData(form);
+            try {
+                await API.put('/rbac/roles/' + roleId, { name: formData.get('name'), description: formData.get('description') });
+                hideRoleFormPanel();
+                loadRoles();
+                showMessage('角色编辑成功', 'success');
+            } catch (err) {
+                showMessage('保存失败: ' + (err.message || ''), 'error');
+            }
+        });
+    }).catch(function() {
+        showMessage('加载角色信息失败', 'error');
+        hideRoleFormPanel();
+    });
+}
+
+function showAssignPermissionsPanel(roleId) {
+    var listEl = document.getElementById('rolesListSection');
+    var formEl = document.getElementById('rolesFormSection');
+    var titleEl = document.getElementById('rolesFormTitle');
+    var container = document.getElementById('rolesFormContainer');
+    if (!listEl || !formEl || !container) return;
+    container.innerHTML = '<p class="workbench-loading">加载中...</p>';
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    Promise.all([
+        API.get('/rbac/roles/' + roleId),
+        API.get('/rbac/permissions'),
+        API.get('/rbac/roles/' + roleId + '/permissions')
+    ]).then(function(results) {
+        var role = results[0];
+        var allPerms = results[1];
+        var rolePermsRes = results[2];
+        var rolePermIds = (rolePermsRes && rolePermsRes.permission_ids) ? rolePermsRes.permission_ids : [];
+        titleEl.textContent = '为角色「' + (role.name || '') + '」分配权限';
+        var checkboxesHtml = (allPerms.length === 0)
+            ? '<p class="workbench-loading">暂无权限，请先在权限管理中创建权限。</p>'
+            : allPerms.map(function(p) {
+                var checked = rolePermIds.indexOf(p.id) >= 0 ? ' checked' : '';
+                return '<label class="assign-perm-item"><input type="checkbox" name="perm" value="' + p.id + '"' + checked + '><span class="assign-perm-label">' + (p.name || p.code) + '</span></label>';
+            }).join('');
+        container.innerHTML = `
+            <form id="assignPermissionsFormInPage">
+                <div class="form-group">
+                    <p>勾选该角色拥有的权限：</p>
+                    <div class="assign-perm-toolbar">
+                        <label><input type="checkbox" id="assignPermSelectAllInPage" onchange="toggleAssignPermSelectAllInPage(this)"> 全选</label>
+                    </div>
+                    <div class="assign-permissions-list">${checkboxesHtml}</div>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button type="button" class="btn btn-secondary" onclick="hideRoleFormPanel()">取消</button>
+                </div>
+            </form>
+        `;
+        container.querySelector('#assignPermissionsFormInPage').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var form = e.target;
+            var permIds = Array.from(form.querySelectorAll('input[name="perm"]:checked')).map(function(cb) { return parseInt(cb.value, 10); });
+            try {
+                await API.post('/rbac/roles/' + roleId + '/permissions', { permission_ids: permIds });
+                hideRoleFormPanel();
+                loadRoles();
+                loadPermissions();
+                showMessage('权限分配已保存', 'success');
+            } catch (err) {
+                showMessage('保存失败: ' + (err.message || ''), 'error');
+            }
+        });
+    }).catch(function(err) {
+        showMessage('加载失败: ' + (err.message || ''), 'error');
+        hideRoleFormPanel();
+    });
+}
+
+function toggleAssignPermSelectAllInPage(checkbox) {
+    var form = document.getElementById('assignPermissionsFormInPage');
+    if (form) form.querySelectorAll('input[name="perm"]').forEach(function(cb) { cb.checked = checkbox.checked; });
 }
 
 function toggleRolesSelectAll(checkbox) {
@@ -820,81 +1474,11 @@ async function deleteRole(roleId) {
     }
 }
 
-async function editRole(roleId) {
-    try {
-        const role = await API.get(`/rbac/roles/${roleId}`);
-        showModal('编辑角色', `
-            <form id="editRoleForm">
-                <div class="form-group">
-                    <label>角色名称</label>
-                    <input type="text" name="name" value="${role.name}" required>
-                </div>
-                <div class="form-group">
-                    <label>描述</label>
-                    <textarea name="description">${role.description || ''}</textarea>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">保存</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
-                </div>
-            </form>
-        `, async (form) => {
-            const formData = new FormData(form);
-            await API.put(`/rbac/roles/${roleId}`, {
-                name: formData.get('name'),
-                description: formData.get('description')
-            });
-            closeModal();
-            loadRoles();
-            showMessage('角色编辑成功', 'success');
-        });
-    } catch (error) {
-        showMessage('加载角色信息失败', 'error');
-    }
-}
-
-async function assignPermissions(roleId) {
-    try {
-        const [role, allPerms, rolePermsRes] = await Promise.all([
-            API.get('/rbac/roles/' + roleId),
-            API.get('/rbac/permissions'),
-            API.get('/rbac/roles/' + roleId + '/permissions')
-        ]);
-        const rolePermIds = (rolePermsRes && rolePermsRes.permission_ids) ? rolePermsRes.permission_ids : [];
-        const checkboxesHtml = (allPerms.length === 0)
-            ? '<p class="workbench-loading">暂无权限，请先在权限管理中创建权限。</p>'
-            : allPerms.map(p => `<label class="assign-perm-item"><input type="checkbox" name="perm" value="${p.id}" ${rolePermIds.indexOf(p.id) >= 0 ? 'checked' : ''}><span class="assign-perm-label">${p.name || p.code}</span></label>`).join('');
-        showModal('为角色「' + (role.name || '') + '」分配权限', `
-            <form id="assignPermissionsForm">
-                <div class="form-group">
-                    <p>勾选该角色拥有的权限：</p>
-                    <div class="assign-perm-toolbar">
-                        <label><input type="checkbox" id="assignPermSelectAll" onchange="toggleAssignPermSelectAll(this)"> 全选</label>
-                    </div>
-                    <div class="assign-permissions-list">${checkboxesHtml}</div>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">保存</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
-                </div>
-            </form>
-        `, async (form) => {
-            const permIds = Array.from(form.querySelectorAll('input[name="perm"]:checked')).map(function(cb) { return parseInt(cb.value, 10); });
-            await API.post('/rbac/roles/' + roleId + '/permissions', { permission_ids: permIds });
-            closeModal();
-            loadRoles();
-            loadPermissions();
-            showMessage('权限分配已保存', 'success');
-        });
-    } catch (error) {
-        showMessage('加载失败: ' + (error.message || ''), 'error');
-    }
-}
-
+function editRole(roleId) { showEditRolePanel(roleId); }
+function assignPermissions(roleId) { showAssignPermissionsPanel(roleId); }
 function toggleAssignPermSelectAll(checkbox) {
-    document.querySelectorAll('#assignPermissionsForm input[name="perm"]').forEach(function(cb) {
-        cb.checked = checkbox.checked;
-    });
+    var form = document.getElementById('assignPermissionsForm');
+    if (form) form.querySelectorAll('input[name="perm"]').forEach(function(cb) { cb.checked = checkbox.checked; });
 }
 
 // ========== 权限管理 ==========
@@ -918,7 +1502,7 @@ async function loadPermissions() {
                 <td>${p.resource_id || '-'}</td>
                 <td>${p.description || '-'}</td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="editPermission(${p.id})">编辑</button>
+                    <button class="btn btn-sm btn-primary" onclick="showEditPermissionPanel(${p.id})">编辑</button>
                     <button class="btn btn-sm btn-danger" onclick="deletePermission(${p.id})">删除</button>
                 </td>
             </tr>
@@ -928,9 +1512,15 @@ async function loadPermissions() {
     }
 }
 
-function showCreatePermissionModal() {
-    showModal('创建权限', `
-        <form id="createPermissionForm">
+function showCreatePermissionPanel() {
+    var listEl = document.getElementById('permissionsListSection');
+    var formEl = document.getElementById('permissionsFormSection');
+    var titleEl = document.getElementById('permissionsFormTitle');
+    var container = document.getElementById('permissionsFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '新建权限';
+    container.innerHTML = `
+        <form id="createPermissionFormInPage">
             <div class="form-group">
                 <label>权限代码</label>
                 <input type="text" name="code" placeholder="如: orders:read" required>
@@ -947,37 +1537,64 @@ function showCreatePermissionModal() {
                 <label>描述</label>
                 <textarea name="description"></textarea>
             </div>
-            <div class="modal-actions">
+            <div class="form-actions">
                 <button type="submit" class="btn btn-primary">创建</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                <button type="button" class="btn btn-secondary" onclick="hidePermissionFormPanel()">取消</button>
             </div>
         </form>
-    `, async (form) => {
-        const formData = new FormData(form);
-        await API.post('/rbac/permissions', {
-            code: formData.get('code'),
-            name: formData.get('name'),
-            resource_id: parseInt(formData.get('resource_id')),
-            description: formData.get('description')
-        });
-        closeModal();
-        loadPermissions();
-        showMessage('权限创建成功', 'success');
+    `;
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    container.querySelector('#createPermissionFormInPage').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var form = e.target;
+        var formData = new FormData(form);
+        try {
+            await API.post('/rbac/permissions', {
+                code: formData.get('code'),
+                name: formData.get('name'),
+                resource_id: parseInt(formData.get('resource_id'), 10),
+                description: formData.get('description')
+            });
+            hidePermissionFormPanel();
+            loadPermissions();
+            showMessage('权限创建成功', 'success');
+        } catch (err) {
+            showMessage('创建失败: ' + (err.message || ''), 'error');
+        }
     });
 }
 
-async function editPermission(permissionId) {
-    try {
-        const permission = await API.get(`/rbac/permissions/${permissionId}`);
-        showModal('编辑权限', `
-            <form id="editPermissionForm">
+function hidePermissionFormPanel() {
+    var listEl = document.getElementById('permissionsListSection');
+    var formEl = document.getElementById('permissionsFormSection');
+    if (listEl) listEl.style.display = '';
+    if (formEl) formEl.style.display = 'none';
+}
+
+function showEditPermissionPanel(permissionId) {
+    var listEl = document.getElementById('permissionsListSection');
+    var formEl = document.getElementById('permissionsFormSection');
+    var titleEl = document.getElementById('permissionsFormTitle');
+    var container = document.getElementById('permissionsFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '编辑权限';
+    container.innerHTML = '<p class="workbench-loading">加载中...</p>';
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    API.get('/rbac/permissions/' + permissionId).then(function(permission) {
+        var code = (permission.code || '').replace(/"/g, '&quot;');
+        var name = (permission.name || '').replace(/"/g, '&quot;');
+        var desc = (permission.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        container.innerHTML = `
+            <form id="editPermissionFormInPage">
                 <div class="form-group">
                     <label>权限代码</label>
-                    <input type="text" name="code" value="${permission.code}" required>
+                    <input type="text" name="code" value="${code}" required>
                 </div>
                 <div class="form-group">
                     <label>权限名称</label>
-                    <input type="text" name="name" value="${permission.name}" required>
+                    <input type="text" name="name" value="${name}" required>
                 </div>
                 <div class="form-group">
                     <label>资源ID</label>
@@ -985,29 +1602,39 @@ async function editPermission(permissionId) {
                 </div>
                 <div class="form-group">
                     <label>描述</label>
-                    <textarea name="description">${permission.description || ''}</textarea>
+                    <textarea name="description">${desc}</textarea>
                 </div>
-                <div class="modal-actions">
+                <div class="form-actions">
                     <button type="submit" class="btn btn-primary">保存</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                    <button type="button" class="btn btn-secondary" onclick="hidePermissionFormPanel()">取消</button>
                 </div>
             </form>
-        `, async (form) => {
-            const formData = new FormData(form);
-            await API.put(`/rbac/permissions/${permissionId}`, {
-                code: formData.get('code'),
-                name: formData.get('name'),
-                resource_id: parseInt(formData.get('resource_id')),
-                description: formData.get('description')
-            });
-            closeModal();
-            loadPermissions();
-            showMessage('权限编辑成功', 'success');
+        `;
+        container.querySelector('#editPermissionFormInPage').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var form = e.target;
+            var formData = new FormData(form);
+            try {
+                await API.put('/rbac/permissions/' + permissionId, {
+                    code: formData.get('code'),
+                    name: formData.get('name'),
+                    resource_id: parseInt(formData.get('resource_id'), 10),
+                    description: formData.get('description')
+                });
+                hidePermissionFormPanel();
+                loadPermissions();
+                showMessage('权限编辑成功', 'success');
+            } catch (err) {
+                showMessage('保存失败: ' + (err.message || ''), 'error');
+            }
         });
-    } catch (error) {
+    }).catch(function() {
         showMessage('加载权限信息失败', 'error');
-    }
+        hidePermissionFormPanel();
+    });
 }
+
+function editPermission(permissionId) { showEditPermissionPanel(permissionId); }
 
 function togglePermissionsSelectAll(checkbox) {
     document.querySelectorAll('#permissionsTableBody input.permission-row-cb').forEach(function(cb) { cb.checked = checkbox.checked; });
@@ -1061,7 +1688,7 @@ async function loadResources() {
                 <td>${res.method || '-'}</td>
                 <td>${res.app_id}</td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="editResource(${res.id})">编辑</button>
+                    <button class="btn btn-sm btn-primary" onclick="showEditResourcePanel(${res.id})">编辑</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteResource(${res.id})">删除</button>
                 </td>
             </tr>
@@ -1071,9 +1698,15 @@ async function loadResources() {
     }
 }
 
-function showCreateResourceModal() {
-    showModal('新建资源', `
-        <form id="createResourceForm">
+function showCreateResourcePanel() {
+    var listEl = document.getElementById('resourcesListSection');
+    var formEl = document.getElementById('resourcesFormSection');
+    var titleEl = document.getElementById('resourcesFormTitle');
+    var container = document.getElementById('resourcesFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '新建资源';
+    container.innerHTML = `
+        <form id="createResourceFormInPage">
             <div class="form-group">
                 <label>应用ID</label>
                 <input type="number" name="app_id" required>
@@ -1104,83 +1737,129 @@ function showCreateResourceModal() {
                     <option value="DELETE">DELETE</option>
                 </select>
             </div>
-            <div class="modal-actions">
+            <div class="form-actions">
                 <button type="submit" class="btn btn-primary">创建</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                <button type="button" class="btn btn-secondary" onclick="hideResourceFormPanel()">取消</button>
             </div>
         </form>
-    `, async (form) => {
-        const formData = new FormData(form);
-        await API.post('/rbac/resources', {
-            app_id: parseInt(formData.get('app_id')),
-            name: formData.get('name'),
-            resource_type: formData.get('resource_type'),
-            path: formData.get('path'),
-            method: formData.get('method') || null
-        });
-        closeModal();
-        loadResources();
-        showMessage('资源创建成功', 'success');
+    `;
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    container.querySelector('#createResourceFormInPage').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var form = e.target;
+        var formData = new FormData(form);
+        try {
+            await API.post('/rbac/resources', {
+                app_id: parseInt(formData.get('app_id'), 10),
+                name: formData.get('name'),
+                resource_type: formData.get('resource_type'),
+                path: formData.get('path'),
+                method: formData.get('method') || null
+            });
+            hideResourceFormPanel();
+            loadResources();
+            showMessage('资源创建成功', 'success');
+        } catch (err) {
+            showMessage('创建失败: ' + (err.message || ''), 'error');
+        }
     });
 }
 
-async function editResource(resourceId) {
-    try {
-        const resource = await API.get(`/rbac/resources/${resourceId}`);
-        showModal('编辑资源', `
-            <form id="editResourceForm">
+function hideResourceFormPanel() {
+    var listEl = document.getElementById('resourcesListSection');
+    var formEl = document.getElementById('resourcesFormSection');
+    if (listEl) listEl.style.display = '';
+    if (formEl) formEl.style.display = 'none';
+}
+
+function showEditResourcePanel(resourceId) {
+    var listEl = document.getElementById('resourcesListSection');
+    var formEl = document.getElementById('resourcesFormSection');
+    var titleEl = document.getElementById('resourcesFormTitle');
+    var container = document.getElementById('resourcesFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '编辑资源';
+    container.innerHTML = '<p class="workbench-loading">加载中...</p>';
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    API.get('/rbac/resources/' + resourceId).then(function(resource) {
+        var rt = resource.resource_type || 'api';
+        var apiSel = rt === 'api' ? ' selected' : '';
+        var uiSel = rt === 'ui' ? ' selected' : '';
+        var otherSel = rt === 'other' ? ' selected' : '';
+        var m = resource.method || '';
+        var mEmpty = !m ? ' selected' : '';
+        var mGet = m === 'GET' ? ' selected' : '';
+        var mPost = m === 'POST' ? ' selected' : '';
+        var mPut = m === 'PUT' ? ' selected' : '';
+        var mDel = m === 'DELETE' ? ' selected' : '';
+        var nameVal = (resource.name || '').replace(/"/g, '&quot;');
+        var pathVal = (resource.path || '').replace(/"/g, '&quot;');
+        container.innerHTML = `
+            <form id="editResourceFormInPage">
                 <div class="form-group">
                     <label>应用ID</label>
                     <input type="number" name="app_id" value="${resource.app_id}" required>
                 </div>
                 <div class="form-group">
                     <label>资源名称</label>
-                    <input type="text" name="name" value="${resource.name}" required>
+                    <input type="text" name="name" value="${nameVal}" required>
                 </div>
                 <div class="form-group">
                     <label>资源类型</label>
                     <select name="resource_type" required>
-                        <option value="api" ${resource.resource_type === 'api' ? 'selected' : ''}>API</option>
-                        <option value="ui" ${resource.resource_type === 'ui' ? 'selected' : ''}>UI</option>
-                        <option value="other" ${resource.resource_type === 'other' ? 'selected' : ''}>其他</option>
+                        <option value="api"${apiSel}>API</option>
+                        <option value="ui"${uiSel}>UI</option>
+                        <option value="other"${otherSel}>其他</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>路径</label>
-                    <input type="text" name="path" value="${resource.path}" required>
+                    <input type="text" name="path" value="${pathVal}" required>
                 </div>
                 <div class="form-group">
                     <label>方法</label>
                     <select name="method">
-                        <option value="" ${!resource.method ? 'selected' : ''}>无</option>
-                        <option value="GET" ${resource.method === 'GET' ? 'selected' : ''}>GET</option>
-                        <option value="POST" ${resource.method === 'POST' ? 'selected' : ''}>POST</option>
-                        <option value="PUT" ${resource.method === 'PUT' ? 'selected' : ''}>PUT</option>
-                        <option value="DELETE" ${resource.method === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                        <option value=""${mEmpty}>无</option>
+                        <option value="GET"${mGet}>GET</option>
+                        <option value="POST"${mPost}>POST</option>
+                        <option value="PUT"${mPut}>PUT</option>
+                        <option value="DELETE"${mDel}>DELETE</option>
                     </select>
                 </div>
-                <div class="modal-actions">
+                <div class="form-actions">
                     <button type="submit" class="btn btn-primary">保存</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                    <button type="button" class="btn btn-secondary" onclick="hideResourceFormPanel()">取消</button>
                 </div>
             </form>
-        `, async (form) => {
-            const formData = new FormData(form);
-            await API.put(`/rbac/resources/${resourceId}`, {
-                app_id: parseInt(formData.get('app_id')),
-                name: formData.get('name'),
-                resource_type: formData.get('resource_type'),
-                path: formData.get('path'),
-                method: formData.get('method') || null
-            });
-            closeModal();
-            loadResources();
-            showMessage('资源编辑成功', 'success');
+        `;
+        container.querySelector('#editResourceFormInPage').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var form = e.target;
+            var formData = new FormData(form);
+            try {
+                await API.put('/rbac/resources/' + resourceId, {
+                    app_id: parseInt(formData.get('app_id'), 10),
+                    name: formData.get('name'),
+                    resource_type: formData.get('resource_type'),
+                    path: formData.get('path'),
+                    method: formData.get('method') || null
+                });
+                hideResourceFormPanel();
+                loadResources();
+                showMessage('资源编辑成功', 'success');
+            } catch (err) {
+                showMessage('保存失败: ' + (err.message || ''), 'error');
+            }
         });
-    } catch (error) {
+    }).catch(function() {
         showMessage('加载资源信息失败', 'error');
-    }
+        hideResourceFormPanel();
+    });
 }
+
+function editResource(resourceId) { showEditResourcePanel(resourceId); }
 
 function toggleResourcesSelectAll(checkbox) {
     document.querySelectorAll('#resourcesTableBody input.resource-row-cb').forEach(function(cb) { cb.checked = checkbox.checked; });
@@ -1258,6 +1937,7 @@ async function loadApps() {
         `).join('');
     } catch (error) {
         console.error('加载应用列表失败:', error);
+        handle403(error);
     }
 }
 
@@ -1422,9 +2102,15 @@ function showBatchCallbacksModal() {
     };
 }
 
-function showCreateAppModal() {
-    showModal('注册应用', `
-        <form id="createAppForm">
+function showCreateAppPanel() {
+    var listEl = document.getElementById('appsListSection');
+    var formEl = document.getElementById('appsFormSection');
+    var titleEl = document.getElementById('appsFormTitle');
+    var container = document.getElementById('appsFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '注册应用';
+    container.innerHTML = `
+        <form id="createAppFormInPage">
             <div class="form-group">
                 <label>应用名称</label>
                 <input type="text" name="app_name" required>
@@ -1437,30 +2123,97 @@ function showCreateAppModal() {
                 <label>回调地址（可选）</label>
                 <input type="url" name="callback_url">
             </div>
-            <div class="modal-actions">
+            <div class="form-actions">
                 <button type="submit" class="btn btn-primary">注册</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                <button type="button" class="btn btn-secondary" onclick="hideAppFormPanel()">取消</button>
             </div>
         </form>
-    `, async (form) => {
-        const formData = new FormData(form);
-        const res = await API.post('/apps/register', {
-            app_name: formData.get('app_name'),
-            description: formData.get('description'),
-            callback_url: formData.get('callback_url') || null
+    `;
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    container.querySelector('#createAppFormInPage').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var form = e.target;
+        var formData = new FormData(form);
+        try {
+            var res = await API.post('/apps/register', {
+                app_name: formData.get('app_name'),
+                description: formData.get('description'),
+                callback_url: formData.get('callback_url') || null
+            });
+            hideAppFormPanel();
+            loadApps();
+            var text = 'app_id: ' + (res.app_id || '') + '\napp_secret: ' + (res.app_secret || '') + '\napp_name: ' + (res.app_name || '') + '\nstatus: ' + (res.status || '') + '\n\n请妥善保存 app_secret，关闭后将无法再次查看。';
+            var json = JSON.stringify({ app_id: res.app_id, app_secret: res.app_secret, app_name: res.app_name, status: res.status }, null, 2);
+            showModal('应用注册成功（请保存密钥）', '<pre style="max-height:280px;overflow:auto;font-size:12px;white-space:pre-wrap;">' + text.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre><div class="modal-actions"><a href="data:application/json;charset=utf-8,' + encodeURIComponent(json) + '" download="app_credentials.json" class="btn btn-primary">下载密钥 JSON</a><button type="button" class="btn btn-secondary" onclick="closeModal()">关闭</button></div>', null);
+            showMessage('应用注册成功，请保存上方密钥', 'success');
+        } catch (err) {
+            showMessage('注册失败: ' + (err.message || ''), 'error');
+        }
+    });
+}
+
+function hideAppFormPanel() {
+    var listEl = document.getElementById('appsListSection');
+    var formEl = document.getElementById('appsFormSection');
+    if (listEl) listEl.style.display = '';
+    if (formEl) formEl.style.display = 'none';
+}
+
+function showEditAppPanel(appId) {
+    var listEl = document.getElementById('appsListSection');
+    var formEl = document.getElementById('appsFormSection');
+    var titleEl = document.getElementById('appsFormTitle');
+    var container = document.getElementById('appsFormContainer');
+    if (!listEl || !formEl || !container) return;
+    titleEl.textContent = '编辑应用';
+    container.innerHTML = '<p class="workbench-loading">加载中...</p>';
+    listEl.style.display = 'none';
+    formEl.style.display = 'block';
+    API.get('/apps/' + appId).then(function(app) {
+        var name = (app.app_name || '').replace(/"/g, '&quot;');
+        var desc = (app.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var url = (app.callback_url || '').replace(/"/g, '&quot;');
+        container.innerHTML = `
+            <form id="editAppFormInPage">
+                <div class="form-group">
+                    <label>应用名称</label>
+                    <input type="text" name="app_name" value="${name}" required>
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea name="description">${desc}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>回调地址</label>
+                    <input type="url" name="callback_url" value="${url}">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button type="button" class="btn btn-secondary" onclick="hideAppFormPanel()">取消</button>
+                </div>
+            </form>
+        `;
+        container.querySelector('#editAppFormInPage').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var form = e.target;
+            var formData = new FormData(form);
+            try {
+                await API.put('/apps/' + appId, {
+                    app_name: formData.get('app_name'),
+                    description: formData.get('description'),
+                    callback_url: formData.get('callback_url') || ''
+                });
+                hideAppFormPanel();
+                loadApps();
+                showMessage('应用编辑成功', 'success');
+            } catch (err) {
+                showMessage('保存失败: ' + (err.message || ''), 'error');
+            }
         });
-        closeModal();
-        loadApps();
-        var text = 'app_id: ' + (res.app_id || '') + '\napp_secret: ' + (res.app_secret || '') + '\napp_name: ' + (res.app_name || '') + '\nstatus: ' + (res.status || '') + '\n\n请妥善保存 app_secret，关闭后将无法再次查看。';
-        var json = JSON.stringify({ app_id: res.app_id, app_secret: res.app_secret, app_name: res.app_name, status: res.status }, null, 2);
-        showModal('应用注册成功（请保存密钥）', `
-            <pre style="max-height:280px;overflow:auto;font-size:12px;white-space:pre-wrap;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-            <div class="modal-actions">
-                <a href="data:application/json;charset=utf-8,${encodeURIComponent(json)}" download="app_credentials.json" class="btn btn-primary">下载密钥 JSON</a>
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">关闭</button>
-            </div>
-        `, null);
-        showMessage('应用注册成功，请保存上方密钥', 'success');
+    }).catch(function() {
+        showMessage('加载应用信息失败', 'error');
+        hideAppFormPanel();
     });
 }
 
@@ -1513,43 +2266,7 @@ async function deleteApp(appId) {
     }
 }
 
-async function editApp(appId) {
-    try {
-        const app = await API.get(`/apps/${appId}`);
-        showModal('编辑应用', `
-            <form id="editAppForm">
-                <div class="form-group">
-                    <label>应用名称</label>
-                    <input type="text" name="app_name" value="${app.app_name}" required>
-                </div>
-                <div class="form-group">
-                    <label>描述</label>
-                    <textarea name="description">${app.description || ''}</textarea>
-                </div>
-                <div class="form-group">
-                    <label>回调地址</label>
-                    <input type="url" name="callback_url" value="${app.callback_url || ''}">
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">保存</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
-                </div>
-            </form>
-        `, async (form) => {
-            const formData = new FormData(form);
-            await API.put(`/apps/${appId}`, {
-                app_name: formData.get('app_name'),
-                description: formData.get('description'),
-                callback_url: formData.get('callback_url') || ''
-            });
-            closeModal();
-            loadApps();
-            showMessage('应用编辑成功', 'success');
-        });
-    } catch (error) {
-        showMessage('加载应用信息失败', 'error');
-    }
-}
+function editApp(appId) { showEditAppPanel(appId); }
 
 // ========== 日志管理 ==========
 const LOG_ACTION_LABELS = {
@@ -1583,25 +2300,32 @@ function formatBeijingTime(dateString) {
 }
 
 async function loadLogs() {
-    const tbody = document.getElementById('logsTableBody');
+    var tbody = document.getElementById('logsTableBody');
+    var paginationEl = document.getElementById('logsPagination');
     if (!tbody) return;
     try {
         tbody.innerHTML = '<tr><td colspan="9">加载中...</td></tr>';
-        const startTime = document.getElementById('logStartTime')?.value;
-        const endTime = document.getElementById('logEndTime')?.value;
-        const action = document.getElementById('logActionFilter')?.value;
-        const success = document.getElementById('logSuccessFilter')?.value;
-        let url = '/logs/?limit=200';
+        if (paginationEl) paginationEl.innerHTML = '';
+        var startTime = document.getElementById('logStartTime') && document.getElementById('logStartTime').value ? document.getElementById('logStartTime').value : '';
+        var endTime = document.getElementById('logEndTime') && document.getElementById('logEndTime').value ? document.getElementById('logEndTime').value : '';
+        var action = document.getElementById('logActionFilter') && document.getElementById('logActionFilter').value ? document.getElementById('logActionFilter').value : '';
+        var success = document.getElementById('logSuccessFilter') && document.getElementById('logSuccessFilter').value ? document.getElementById('logSuccessFilter').value : '';
+        var skip = (logsPageCurrent - 1) * logsPageSize;
+        var url = '/logs/?limit=' + logsPageSize + '&skip=' + skip;
         if (startTime) url += '&start_time=' + encodeURIComponent(startTime);
         if (endTime) url += '&end_time=' + encodeURIComponent(endTime);
         if (action) url += '&action=' + encodeURIComponent(action);
         if (success === 'true' || success === 'false') url += '&success=' + success;
-        const logs = await API.get(url);
-        if (logs.length === 0) {
+        var res = await API.get(url);
+        var list = res && res.items ? res.items : [];
+        var total = (res && typeof res.total === 'number') ? res.total : 0;
+        var maxPage = Math.max(1, Math.ceil(total / logsPageSize));
+        if (list.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9">暂无日志</td></tr>';
+            if (paginationEl) renderPaginationBar(paginationEl, logsPageCurrent, maxPage, logsPageGo);
             return;
         }
-        tbody.innerHTML = logs.map(log => `
+        tbody.innerHTML = list.map(log => `
             <tr>
                 <td>${log.id}</td>
                 <td>${log.actor_user_id ?? '-'}</td>
@@ -1614,10 +2338,23 @@ async function loadLogs() {
                 <td>${formatBeijingTime(log.created_at)}</td>
             </tr>
         `).join('');
+        if (paginationEl) renderPaginationBar(paginationEl, logsPageCurrent, maxPage, logsPageGo);
     } catch (error) {
         console.error('加载日志列表失败:', error);
         tbody.innerHTML = '<tr><td colspan="9">加载失败</td></tr>';
+        handle403(error);
     }
+}
+
+function logsPageGo(page) {
+    if (page < 1) return;
+    logsPageCurrent = page;
+    loadLogs();
+}
+
+function queryLogs() {
+    logsPageCurrent = 1;
+    loadLogs();
 }
 
 async function exportLogs() {
@@ -1660,7 +2397,41 @@ async function exportLogs() {
     }
 }
 
-// ========== 个人中心（右上角弹窗） ==========
+// ========== 个人中心（标签页展开，非弹窗） ==========
+function loadProfilePageData() {
+    var infoEl = document.getElementById('profileInfo');
+    if (infoEl && currentUser) {
+        var roles = (currentUser.roles || []).map(function(r) { return r.name; }).join('、') || '无角色';
+        infoEl.innerHTML = '<div class="profile-field"><label>用户名</label><span>' + escapeHtml(currentUser.username) + '</span></div>' +
+            '<div class="profile-field"><label>邮箱</label><span>' + escapeHtml(currentUser.email) + '</span></div>' +
+            '<div class="profile-field"><label>姓名</label><span>' + escapeHtml(currentUser.full_name || '-') + '</span></div>' +
+            '<div class="profile-field"><label>角色</label><span>' + escapeHtml(roles) + '</span></div>' +
+            '<div class="profile-field"><label>状态</label><span class="badge ' + (currentUser.is_active ? 'badge-success' : 'badge-danger') + '">' + (currentUser.is_active ? '已激活' : '未激活') + '</span></div>';
+    }
+    var form = document.getElementById('changePasswordForm');
+    if (form && !form._profileBound) {
+        form._profileBound = true;
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var oldPwd = form.querySelector('[name="old_password"]').value;
+            var newPwd = form.querySelector('[name="new_password"]').value;
+            var confirmPwd = form.querySelector('[name="confirm_password"]').value;
+            if (newPwd !== confirmPwd) {
+                showMessage('两次输入的新密码不一致', 'error');
+                return;
+            }
+            try {
+                await API.post('/users/me/change-password', { old_password: oldPwd, new_password: newPwd, confirm_password: confirmPwd });
+                showMessage('密码修改成功', 'success');
+                form.reset();
+            } catch (err) {
+                showMessage('修改失败: ' + (err.message || ''), 'error');
+            }
+        });
+    }
+    loadMySessions();
+}
+
 function getCurrentJti() {
     try {
         var token = localStorage.getItem('access_token');
@@ -1823,30 +2594,53 @@ async function revokeSessionInModal(jti) {
     }
 }
 
+function renderSessionsPage() {
+    var tbody = document.getElementById('sessionsTableBody');
+    var paginationEl = document.getElementById('sessionsPagination');
+    if (!tbody) return;
+    var total = sessionsAll.length;
+    var maxPage = Math.max(1, Math.ceil(total / sessionsPageSize));
+    var start = (sessionsPageCurrent - 1) * sessionsPageSize;
+    var list = sessionsAll.slice(start, start + sessionsPageSize);
+    if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7">暂无会话</td></tr>';
+        if (paginationEl) renderPaginationBar(paginationEl, 1, maxPage, sessionsPageGo);
+        return;
+    }
+    tbody.innerHTML = list.map(function(s) {
+        var statusBadge = s.active
+            ? '<span class="badge badge-success">活跃</span>'
+            : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
+        return '<tr>' +
+            '<td title="' + escapeHtml(s.jti || '') + '">' + (s.jti ? escapeHtml(s.jti.substring(0, 12)) + '...' : '-') + '</td>' +
+            '<td>' + escapeHtml(s.ip || '-') + '</td>' +
+            '<td title="' + escapeHtml(s.user_agent || '') + '">' + (s.user_agent ? escapeHtml(s.user_agent.substring(0, 40)) + '...' : '-') + '</td>' +
+            '<td>' + formatBeijingTime(s.created_at) + '</td>' +
+            '<td>' + formatBeijingTime(s.expires_at) + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + (s.active ? '<button type="button" class="btn btn-sm btn-danger" data-jti="' + escapeHtml(s.jti || '') + '" onclick="revokeSession(this.getAttribute(\'data-jti\'))">撤销</button>' : '-') + '</td>' +
+            '</tr>';
+    }).join('');
+    if (paginationEl) renderPaginationBar(paginationEl, sessionsPageCurrent, maxPage, sessionsPageGo);
+}
+
+function sessionsPageGo(page) {
+    if (page < 1) return;
+    sessionsPageCurrent = page;
+    renderSessionsPage();
+}
+
 async function loadMySessions() {
     var tbody = document.getElementById('sessionsTableBody');
     if (!tbody) return;
     try {
+        tbody.innerHTML = '<tr><td colspan="7">加载中...</td></tr>';
         var sessions = await API.get('/auth/sessions/me');
-        if (!sessions || sessions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7">暂无会话</td></tr>';
-            return;
-        }
-        tbody.innerHTML = sessions.map(function(s) {
-            var statusBadge = s.active
-                ? '<span class="badge badge-success">活跃</span>'
-                : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
-            return '<tr>' +
-                '<td title="' + s.jti + '">' + (s.jti ? s.jti.substring(0, 12) + '...' : '-') + '</td>' +
-                '<td>' + (s.ip || '-') + '</td>' +
-                '<td title="' + (s.user_agent || '') + '">' + (s.user_agent ? s.user_agent.substring(0, 40) + '...' : '-') + '</td>' +
-                '<td>' + formatBeijingTime(s.created_at) + '</td>' +
-                '<td>' + formatBeijingTime(s.expires_at) + '</td>' +
-                '<td>' + statusBadge + '</td>' +
-                '<td>' + (s.active ? '<button class="btn btn-sm btn-danger" onclick="revokeSession(\'' + s.jti + '\')">撤销</button>' : '-') + '</td>' +
-                '</tr>';
-        }).join('');
+        sessionsAll = Array.isArray(sessions) ? sessions : [];
+        sessionsPageCurrent = 1;
+        renderSessionsPage();
     } catch (e) {
+        sessionsAll = [];
         tbody.innerHTML = '<tr><td colspan="7">加载失败</td></tr>';
     }
 }
@@ -1866,6 +2660,11 @@ async function revokeSession(jti) {
 async function loadSystemSettings() {
     try {
         var settings = await API.get('/system/settings');
+        var allowCb = document.getElementById('toggleAllowRegistration');
+        var allowStatus = document.getElementById('registrationStatus');
+        if (allowCb) allowCb.checked = settings.allow_registration;
+        if (allowStatus) allowStatus.textContent = settings.allow_registration ? '已开放' : '已关闭注册';
+
         var checkbox = document.getElementById('toggleApproval');
         var status = document.getElementById('approvalStatus');
         if (checkbox) checkbox.checked = settings.require_registration_approval;
@@ -1876,6 +2675,19 @@ async function loadSystemSettings() {
         if (blEl) blEl.textContent = secOverview.token_blacklist_size;
     } catch (e) {
         console.error('加载系统设置失败:', e);
+        handle403(e);
+    }
+}
+
+async function toggleAllowRegistration(checkbox) {
+    try {
+        var res = await API.put('/system/settings', { allow_registration: checkbox.checked });
+        var status = document.getElementById('registrationStatus');
+        if (status) status.textContent = res.allow_registration ? '已开放' : '已关闭注册';
+        showMessage('设置已更新', 'success');
+    } catch (e) {
+        checkbox.checked = !checkbox.checked;
+        showMessage('更新失败: ' + (e.message || ''), 'error');
     }
 }
 

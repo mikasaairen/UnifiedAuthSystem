@@ -14,10 +14,12 @@ router = APIRouter()
 
 
 class SystemSettingsResponse(BaseModel):
+    allow_registration: bool
     require_registration_approval: bool
 
 
 class SystemSettingsUpdate(BaseModel):
+    allow_registration: bool | None = None
     require_registration_approval: bool | None = None
 
 
@@ -26,6 +28,7 @@ async def get_settings(
     current_user: User = Depends(require_permission("system:manage")),
 ):
     return SystemSettingsResponse(
+        allow_registration=settings.ALLOW_REGISTRATION,
         require_registration_approval=settings.REQUIRE_REGISTRATION_APPROVAL,
     )
 
@@ -35,11 +38,20 @@ async def update_settings(
     body: SystemSettingsUpdate,
     current_user: User = Depends(require_permission("system:manage")),
 ):
+    if body.allow_registration is not None:
+        settings.ALLOW_REGISTRATION = body.allow_registration
     if body.require_registration_approval is not None:
         settings.REQUIRE_REGISTRATION_APPROVAL = body.require_registration_approval
     return SystemSettingsResponse(
+        allow_registration=settings.ALLOW_REGISTRATION,
         require_registration_approval=settings.REQUIRE_REGISTRATION_APPROVAL,
     )
+
+
+@router.get("/registration-allowed")
+async def registration_allowed():
+    """公开接口：供登录页判断是否显示注册入口，无需认证。"""
+    return {"allowed": settings.ALLOW_REGISTRATION}
 
 
 class SecurityOverview(BaseModel):

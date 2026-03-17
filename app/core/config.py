@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     LOGIN_MAX_FAILS: int = 15
     LOGIN_LOCK_MINUTES: int = 15
     
+    # 是否允许新用户注册（关闭后登录页不显示注册入口，注册接口返回 403）
+    ALLOW_REGISTRATION: bool = True
     # 注册审核：开启后新注册用户需管理员审核方可登录
     REQUIRE_REGISTRATION_APPROVAL: bool = False
 
