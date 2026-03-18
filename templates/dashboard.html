@@ -81,7 +81,7 @@
             <div class="main-tabs-bar">
                 <div class="main-tabs-list" id="mainTabsList"></div>
                 <div class="main-tabs-actions">
-                    <button type="button" class="main-tabs-dropdown-btn" id="tabsDropdownBtn" aria-haspopup="true" aria-expanded="false">▼ 标签操作</button>
+                    <button type="button" class="main-tabs-dropdown-btn" id="tabsDropdownBtn" aria-haspopup="true" aria-expanded="false">▼ </button>
                     <div class="main-tabs-dropdown" id="tabsDropdown" role="menu" aria-hidden="true">
                         <button type="button" role="menuitem" data-action="closeCurrent">关闭当前</button>
                         <button type="button" role="menuitem" data-action="closeOthers">关闭其他</button>
@@ -93,6 +93,9 @@
             <div class="tab-panels-wrap">
             <!-- 工作台页面 -->
             <div id="workbenchPage" class="page-content">
+                <div class="page-header">
+                    <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
+                </div>
                 <div class="workbench-category">已接入应用</div>
                 <div id="workbenchGrid" class="workbench-grid">
                     <p class="workbench-loading">加载中...</p>
@@ -101,6 +104,9 @@
 
             <!-- 概览页面：各统计卡片按权限显示，有权限则展示对应数据 -->
             <div id="overviewPage" class="page-content">
+                <div class="page-header">
+                    <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
+                </div>
                 <div class="stats-grid" id="overviewStatsGrid">
                     <div class="stat-card" id="statUsers" data-permission="users:manage" style="display:none">
                         <h3>用户总数</h3>
@@ -167,6 +173,7 @@
                     <div class="page-header">
                         <button class="btn btn-primary" onclick="showCreateUserPanel()">+ 新建用户</button>
                         <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteUsers()">批量删除</button>
+                        
                         <select id="userStatusFilter" onchange="loadUsers()">
                             <option value="">全部状态</option>
                             <option value="active">已激活</option>
@@ -180,6 +187,7 @@
                             <button type="button" class="btn btn-primary" onclick="searchUsers()">搜索</button>
                             <span id="userSearchFeedback" class="search-feedback"></span>
                         </div>
+                        <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                     </div>
                     <div class="table-container">
                         <table class="data-table">
@@ -244,7 +252,11 @@
                 </div>
                 <!-- 注册审核子页：待审核用户 -->
                 <div id="approvalTab" class="tab-content">
-                    <p class="form-hint">以下为注册待审核用户，审核通过后将出现在「用户列表」中。</p>
+                    
+                    <div class="page-header">
+                        <p class="form-hint">以下为注册待审核用户，审核通过后将出现在「用户列表」中。</p>
+                        <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
+                    </div>
                     <div class="table-container">
                         <table class="data-table">
                             <thead>
@@ -279,6 +291,7 @@
                         <div class="page-header">
                             <button class="btn btn-primary" onclick="showCreateRolePanel()">+ 新建角色</button>
                             <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteRoles()">批量删除</button>
+                            <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                         </div>
                         <div class="table-container">
                             <table class="data-table">
@@ -313,6 +326,7 @@
                         <div class="page-header">
                             <button class="btn btn-primary" onclick="showCreatePermissionPanel()">+ 新建权限</button>
                             <button type="button" class="btn btn-danger btn-sm" onclick="batchDeletePermissions()">批量删除</button>
+                            <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                         </div>
                         <div class="table-container">
                             <table class="data-table">
@@ -348,6 +362,7 @@
                         <div class="page-header">
                             <button class="btn btn-primary" onclick="showCreateResourcePanel()">+ 新建资源</button>
                             <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteResources()">批量删除</button>
+                            <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                         </div>
                         <div class="table-container">
                             <table class="data-table">
@@ -385,6 +400,7 @@
                 <div class="page-header">
                     <button class="btn btn-primary" onclick="showCreateAppPanel()">+ 注册应用</button>
                     <button class="btn btn-primary" onclick="showBatchRegisterModal()">批量注册应用</button>
+
                     <select id="appStatusFilter" onchange="loadApps()">
                         <option value="">全部状态</option>
                         <option value="pending">待审核</option>
@@ -398,6 +414,7 @@
                         <button type="button" class="btn btn-secondary btn-sm" onclick="exportSelectedApps()">导出选中</button>
                         <button type="button" class="btn btn-secondary btn-sm" onclick="showBatchCallbacksModal()">批量更新回调</button>
                     </span>
+                    <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                 </div>
                 <div class="table-container">
                     <table class="data-table">
@@ -455,13 +472,26 @@
                 <div class="profile-section">
                     <h3>会话管理</h3>
                     <p class="form-hint">以下是您当前的登录会话，可撤销不信任的会话。</p>
+                    <div class="page-header" style="margin-top: 8px;">
+                        <div class="filter-group">
+                            <label>筛选</label>
+                            <select id="sessionsStatusFilter" onchange="applySessionsFilter()">
+                                <option value="active" selected>仅活跃</option>
+                                <option value="revoked">已撤销</option>
+                                <option value="expired">已过期</option>
+                                <option value="all">全部</option>
+                            </select>
+                            <button type="button" class="btn btn-warning btn-sm" onclick="revokeOtherSessionsOnProfilePage()">一键撤销其它设备</button>
+                        <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
+                        </div>
+                    </div>
                     <div class="table-container">
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>会话ID</th>
                                     <th>IP</th>
-                                    <th>浏览器</th>
+                                    <th>设备</th>
                                     <th>创建时间</th>
                                     <th>过期时间</th>
                                     <th>状态</th>
@@ -479,6 +509,7 @@
 
             <!-- 系统设置页面 -->
             <div id="systemPage" class="page-content">
+
                 <div class="profile-section">
                     <h3>注册与审核</h3>
                     <div class="settings-row-inline">
@@ -539,6 +570,7 @@
                             <option value="true">成功</option>
                             <option value="false">失败</option>
                         </select>
+                        <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                         <button class="btn btn-primary" onclick="queryLogs()">查询</button>
                         <button class="btn btn-secondary" onclick="exportLogs()">导出 CSV</button>
                     </div>

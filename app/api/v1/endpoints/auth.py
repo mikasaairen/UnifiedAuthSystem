@@ -223,24 +223,43 @@ async def login(
             db.add(user)
             db.commit()
 
-        # 同一个 jti 绑定 access+refresh，便于会话管理
-        jti = new_jti()
+        # 合并重复会话（同设备/同 UA+IP）：以 (user_id, ip, user_agent, app_id) 作为指纹复用会话
+        ua = request.headers.get("user-agent") if request else None
+        ip = request.client.host if request and request.client else None
+        now = datetime.utcnow()
+        existing_sess = db.query(SessionModel).filter(
+            SessionModel.user_id == user.id,
+            SessionModel.app_id.is_(None),
+            SessionModel.ip == ip,
+            SessionModel.user_agent == ua,
+            SessionModel.revoked_at.is_(None),
+            SessionModel.expires_at > now,
+        ).order_by(SessionModel.created_at.desc()).first()
+
+        # 同一个 jti 绑定 access+refresh，便于会话管理；命中指纹则复用现有 jti
+        jti = existing_sess.jti if existing_sess else new_jti()
         access_token, expires_in = create_access_token(subject=user.username, jti=jti)
         refresh_token, refresh_expires_at = create_refresh_token(subject=user.username, jti=jti)
 
-        # 落库 refresh token hash（用于撤销/失效）
-        session_obj = SessionModel(
-            user_id=user.id,
-            app_id=None,
-            jti=jti,
-            refresh_token_hash=hash_token(refresh_token),
-            created_at=datetime.utcnow(),
-            expires_at=refresh_expires_at,
-            ip=request.client.host if request and request.client else None,
-            user_agent=request.headers.get("user-agent") if request else None,
-        )
-        db.add(session_obj)
-        db.commit()
+        if existing_sess:
+            existing_sess.refresh_token_hash = hash_token(refresh_token)
+            existing_sess.expires_at = refresh_expires_at
+            db.add(existing_sess)
+            db.commit()
+        else:
+            # 落库 refresh token hash（用于撤销/失效）
+            session_obj = SessionModel(
+                user_id=user.id,
+                app_id=None,
+                jti=jti,
+                refresh_token_hash=hash_token(refresh_token),
+                created_at=datetime.utcnow(),
+                expires_at=refresh_expires_at,
+                ip=ip,
+                user_agent=ua,
+            )
+            db.add(session_obj)
+            db.commit()
 
         current_ip = request.client.host if request and request.client else None
         ip_changed = (
@@ -600,22 +619,40 @@ async def token(
             )
 
         username = code_data["username"]
-        jti = new_jti()
+        ua = request.headers.get("user-agent") if request else None
+        ip = request.client.host if request and request.client else None
+        now = datetime.utcnow()
+        existing_sess = db.query(SessionModel).filter(
+            SessionModel.user_id == code_data["user_id"],
+            SessionModel.app_id == app.id,
+            SessionModel.ip == ip,
+            SessionModel.user_agent == ua,
+            SessionModel.revoked_at.is_(None),
+            SessionModel.expires_at > now,
+        ).order_by(SessionModel.created_at.desc()).first()
+
+        jti = existing_sess.jti if existing_sess else new_jti()
         access_token, expires_in = create_access_token(subject=username, jti=jti, aud=client_id)
         refresh_token, refresh_expires_at = create_refresh_token(subject=username, jti=jti, aud=client_id)
 
-        session_obj = SessionModel(
-            user_id=code_data["user_id"],
-            app_id=app.id,
-            jti=jti,
-            refresh_token_hash=hash_token(refresh_token),
-            created_at=datetime.utcnow(),
-            expires_at=refresh_expires_at,
-            ip=request.client.host if request and request.client else None,
-            user_agent=request.headers.get("user-agent") if request else None,
-        )
-        db.add(session_obj)
-        db.commit()
+        if existing_sess:
+            existing_sess.refresh_token_hash = hash_token(refresh_token)
+            existing_sess.expires_at = refresh_expires_at
+            db.add(existing_sess)
+            db.commit()
+        else:
+            session_obj = SessionModel(
+                user_id=code_data["user_id"],
+                app_id=app.id,
+                jti=jti,
+                refresh_token_hash=hash_token(refresh_token),
+                created_at=datetime.utcnow(),
+                expires_at=refresh_expires_at,
+                ip=ip,
+                user_agent=ua,
+            )
+            db.add(session_obj)
+            db.commit()
 
         return Token(
             access_token=access_token,

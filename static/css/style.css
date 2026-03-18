@@ -136,6 +136,23 @@ body.dashboard-page { height: 100vh; overflow: hidden; }
 .welcome-section ul { margin: 12px 0 0 20px; }
 
 .page-header { margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn-refresh-icon {
+    margin-left: auto;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #dcdfe6;
+    color: #606266;
+    font-size: 18px;
+    line-height: 1;
+}
+.btn-refresh-icon:hover { color: #409eff; border-color: #c6e2ff; background: #ecf5ff; }
+.btn-refresh-icon:active { background: #d9ecff; }
 .search-box input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; margin-right: 8px; }
 .search-feedback { font-size: 13px; color: #909399; }
 .table-container { background: #fff; border-radius: 8px; overflow: auto; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }

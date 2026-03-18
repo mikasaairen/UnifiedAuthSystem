@@ -66,6 +66,7 @@ var logsTotal = 0;
 var sessionsPageCurrent = 1;
 var sessionsPageSize = 10;
 var sessionsAll = [];
+var sessionsFilter = 'active';
 
 document.addEventListener('DOMContentLoaded', async function() {
     const token = localStorage.getItem('access_token');
@@ -291,6 +292,19 @@ function loadPageData(pageName) {
         default:
             break;
     }
+}
+
+function getActivePageName() {
+    var tab = openTabs.find(function(t) { return t.id === activeTabId; });
+    return tab ? tab.pageName : null;
+}
+
+/** 刷新当前激活页面（不影响其它标签） */
+function refreshActivePage() {
+    var pageName = getActivePageName();
+    if (!pageName) return;
+    loadPageData(pageName);
+    showMessage('已刷新当前页面', 'success');
 }
 
 /** 渲染标签栏（支持拖拽排序） */
@@ -2457,9 +2471,10 @@ function parseUserAgent(ua) {
     else if (/Mac OS X/.test(u)) os = 'macOS';
     else if (/Linux/.test(u)) os = 'Linux';
     var browser = '未知';
-    if (/Edg\//.test(u)) browser = 'Edge';
-    else if (/Chrome\//.test(u) && !/Edg/.test(u)) browser = 'Chrome';
-    else if (/Firefox\//.test(u)) browser = 'Firefox';
+    // 主流浏览器识别：Edge/Chrome/Firefox（含 iOS 特例）
+    if (/Edg\//.test(u) || /EdgA\//.test(u) || /EdgiOS\//.test(u)) browser = 'Edge';
+    else if (/Firefox\//.test(u) || /FxiOS\//.test(u)) browser = 'Firefox';
+    else if (/Chrome\//.test(u) && !/Edg|OPR|Brave/.test(u)) browser = 'Chrome';
     else if (/Safari\//.test(u) && !/Chrome/.test(u)) browser = 'Safari';
     else if (/MSIE|Trident/.test(u)) browser = 'IE';
     return os + ' · ' + browser;
@@ -2598,27 +2613,43 @@ function renderSessionsPage() {
     var tbody = document.getElementById('sessionsTableBody');
     var paginationEl = document.getElementById('sessionsPagination');
     if (!tbody) return;
-    var total = sessionsAll.length;
+    var currentJti = getCurrentJti();
+    var now = new Date();
+    var filtered = (sessionsAll || []).filter(function(s) {
+        if (sessionsFilter === 'all') return true;
+        if (sessionsFilter === 'active') return !!s.active;
+        if (sessionsFilter === 'revoked') return !!s.revoked;
+        if (sessionsFilter === 'expired') return !s.active && !s.revoked;
+        return true;
+    });
+    var total = filtered.length;
     var maxPage = Math.max(1, Math.ceil(total / sessionsPageSize));
+    sessionsPageCurrent = Math.min(sessionsPageCurrent, maxPage);
     var start = (sessionsPageCurrent - 1) * sessionsPageSize;
-    var list = sessionsAll.slice(start, start + sessionsPageSize);
+    var list = filtered.slice(start, start + sessionsPageSize);
     if (list.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7">暂无会话</td></tr>';
         if (paginationEl) renderPaginationBar(paginationEl, 1, maxPage, sessionsPageGo);
         return;
     }
     tbody.innerHTML = list.map(function(s) {
+        var isCurrent = currentJti && s.jti === currentJti;
+        var device = parseUserAgent(s.user_agent || '');
         var statusBadge = s.active
             ? '<span class="badge badge-success">活跃</span>'
             : (s.revoked ? '<span class="badge badge-danger">已撤销</span>' : '<span class="badge badge-warning">已过期</span>');
-        return '<tr>' +
+        var rowClass = isCurrent ? ' class="session-row-current"' : '';
+        var op = '-';
+        if (s.active && !isCurrent) op = '<button type="button" class="btn btn-sm btn-danger" data-jti="' + escapeHtml(s.jti || '') + '" onclick="revokeSession(this.getAttribute(\'data-jti\'))">撤销</button>';
+        else if (isCurrent) op = '<span class="form-hint">当前设备不可撤销</span>';
+        return '<tr' + rowClass + '>' +
             '<td title="' + escapeHtml(s.jti || '') + '">' + (s.jti ? escapeHtml(s.jti.substring(0, 12)) + '...' : '-') + '</td>' +
             '<td>' + escapeHtml(s.ip || '-') + '</td>' +
-            '<td title="' + escapeHtml(s.user_agent || '') + '">' + (s.user_agent ? escapeHtml(s.user_agent.substring(0, 40)) + '...' : '-') + '</td>' +
+            '<td title="' + escapeHtml(s.user_agent || '') + '">' + escapeHtml(device) + (isCurrent ? ' <span class="badge badge-current-device">当前</span>' : '') + '</td>' +
             '<td>' + formatBeijingTime(s.created_at) + '</td>' +
             '<td>' + formatBeijingTime(s.expires_at) + '</td>' +
             '<td>' + statusBadge + '</td>' +
-            '<td>' + (s.active ? '<button type="button" class="btn btn-sm btn-danger" data-jti="' + escapeHtml(s.jti || '') + '" onclick="revokeSession(this.getAttribute(\'data-jti\'))">撤销</button>' : '-') + '</td>' +
+            '<td>' + op + '</td>' +
             '</tr>';
     }).join('');
     if (paginationEl) renderPaginationBar(paginationEl, sessionsPageCurrent, maxPage, sessionsPageGo);
@@ -2627,6 +2658,13 @@ function renderSessionsPage() {
 function sessionsPageGo(page) {
     if (page < 1) return;
     sessionsPageCurrent = page;
+    renderSessionsPage();
+}
+
+function applySessionsFilter() {
+    var sel = document.getElementById('sessionsStatusFilter');
+    if (sel) sessionsFilter = sel.value || 'active';
+    sessionsPageCurrent = 1;
     renderSessionsPage();
 }
 
@@ -2646,10 +2684,26 @@ async function loadMySessions() {
 }
 
 async function revokeSession(jti) {
+    var currentJti = getCurrentJti();
+    if (currentJti && jti === currentJti) {
+        showMessage('当前设备会话不可撤销，请使用右上角登出', 'error');
+        return;
+    }
     if (!confirm('确定要撤销该会话吗？')) return;
     try {
         await API.request('/auth/sessions/me?jti=' + encodeURIComponent(jti), { method: 'DELETE' });
         showMessage('会话已撤销', 'success');
+        loadMySessions();
+    } catch (e) {
+        showMessage('操作失败: ' + (e.message || ''), 'error');
+    }
+}
+
+async function revokeOtherSessionsOnProfilePage() {
+    if (!confirm('确定要撤销除本机外的所有会话吗？其它设备需重新登录。')) return;
+    try {
+        var res = await API.post('/auth/sessions/me/revoke-others', {});
+        showMessage(res.message || '已撤销其它设备会话', 'success');
         loadMySessions();
     } catch (e) {
         showMessage('操作失败: ' + (e.message || ''), 'error');
