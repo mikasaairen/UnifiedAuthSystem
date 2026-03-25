@@ -7,8 +7,9 @@ const LOG_ACTION_LABELS = {
     user_register: '用户注册', user_update: '用户更新', user_disable: '用户禁用',
     user_enable: '用户启用', user_delete: '用户删除',
     app_register: '应用注册', app_delete: '应用删除', app_approve: '应用审核', app_disable: '应用禁用', app_enable: '应用启用',
-    check_permission: '权限检查', introspect: '令牌内省',
-    change_password: '修改密码', account_locked: '账户锁定', login_lock: '登录锁定(IP+用户)', security_alert: '安全告警'
+    app_update: '应用更新',
+    check_permission: '权限检查',
+    change_password: '修改密码', login_lock: '登录锁定(IP+用户)', security_alert: '安全告警'
 };
 
 function formatLogDetails(details) {

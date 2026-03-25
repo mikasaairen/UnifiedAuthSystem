@@ -98,16 +98,22 @@ def index():
                 "<h1>测试应用 test1</h1>"
                 "<p>已通过统一认证系统登录</p>"
                 f"<p>用户名: {user.get('username', '-')} | 邮箱: {user.get('email', '-')}</p>"
+                '<p><a href="/demo/check-permission">触发「权限检查」审计（写入一条 check_permission 日志）</a></p>'
                 '<p><a href="/logout">退出登录</a></p>'
             )
         if r.status_code == 401:
             session.clear()
             return redirect("/logout")
     except Exception as e:
-        return f"<h1>测试应用 test1</h1><p>已登录（获取用户信息失败: {e}）</p><p><a href='/logout'>退出登录</a></p>"
+        return (
+            f"<h1>测试应用 test1</h1><p>已登录（获取用户信息失败: {e}）</p>"
+            '<p><a href="/demo/check-permission">触发「权限检查」审计</a></p>'
+            "<p><a href='/logout'>退出登录</a></p>"
+        )
     return (
         "<h1>测试应用 test1</h1>"
         "<p>已登录</p>"
+        '<p><a href="/demo/check-permission">触发「权限检查」审计</a></p>'
         '<p><a href="/logout">退出登录</a></p>'
     )
 
@@ -140,6 +146,30 @@ def oauth_callback():
     session["access_token"] = data.get("access_token")
     session["refresh_token"] = data.get("refresh_token")
     return redirect("/")
+
+
+@app.route("/demo/check-permission")
+def demo_check_permission():
+    """调用认证中心 POST /apps/check-permission，便于在管理端审计日志中看到「权限检查」。"""
+    token = session.get("access_token")
+    if not token:
+        return redirect("/")
+    perm = f"app:{APP_ID}:access"
+    try:
+        r = requests.post(
+            f"{API_V1}/apps/check-permission",
+            params={"app_id": APP_ID, "permission_code": perm},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        body = r.text[:2000]
+        return (
+            f"<h1>权限检查演示</h1><p>HTTP {r.status_code}</p><pre>{body}</pre>"
+            "<p>请到认证中心 <strong>审计日志</strong>，操作类型选「权限检查」筛选验证。</p>"
+            '<p><a href="/">返回首页</a></p>'
+        )
+    except Exception as e:
+        return f"<h1>请求失败</h1><p>{e}</p><p><a href='/'>返回</a></p>", 500
 
 
 @app.route("/logout")

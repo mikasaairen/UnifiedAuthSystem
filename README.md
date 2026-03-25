@@ -293,7 +293,9 @@ curl -X GET "http://localhost:8000/api/v1/users/me" \
 ### 刷新访问令牌
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/auth/refresh?refresh_token=YOUR_REFRESH_TOKEN"
+curl -X POST "http://localhost:8000/api/v1/auth/refresh" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "refresh_token=YOUR_REFRESH_TOKEN"
 ```
 
 ### 注册新应用（管理员）

@@ -1,9 +1,49 @@
 /**
  * Fetch 请求封装
+ * Access 过期时若存在 refresh_token，会尝试 POST /auth/refresh 并重试一次（产生 refresh 审计日志）。
  */
 const API_BASE_URL = '/api/v1';
 
 class API {
+    /** 并发刷新合并为同一 Promise */
+    static _refreshPromise = null;
+
+    static _shouldAttemptRefresh(endpoint) {
+        if (endpoint.startsWith('/auth/refresh') || endpoint.startsWith('/auth/login')) return false;
+        return !!localStorage.getItem('refresh_token');
+    }
+
+    static async _tryRefreshAccessToken() {
+        if (API._refreshPromise) return API._refreshPromise;
+        const rt = localStorage.getItem('refresh_token');
+        if (!rt) return false;
+        API._refreshPromise = (async () => {
+            try {
+                const body = new URLSearchParams();
+                body.append('refresh_token', rt);
+                const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: body.toString(),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    localStorage.removeItem('access_token');
+                    localStorage.removeItem('refresh_token');
+                    return false;
+                }
+                if (data.access_token) localStorage.setItem('access_token', data.access_token);
+                if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
+                return true;
+            } catch (e) {
+                return false;
+            } finally {
+                API._refreshPromise = null;
+            }
+        })();
+        return API._refreshPromise;
+    }
+
     static async request(endpoint, options = {}) {
         const url = `${API_BASE_URL}${endpoint}`;
         const token = localStorage.getItem('access_token');
@@ -23,9 +63,18 @@ class API {
                 ...options.headers,
             },
         };
+        delete config._authRetry;
 
         try {
             const response = await fetch(url, config);
+
+            if (response.status === 401 && !options._authRetry && API._shouldAttemptRefresh(endpoint)) {
+                const refreshed = await API._tryRefreshAccessToken();
+                if (refreshed) {
+                    return this.request(endpoint, { ...options, _authRetry: true });
+                }
+            }
+
             // 204 No Content 无响应体，不能调用 response.json()
             if (response.status === 204) {
                 if (!response.ok) throw new Error('请求失败');

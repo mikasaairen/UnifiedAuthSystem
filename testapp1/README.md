@@ -138,3 +138,33 @@ python app.py
 | 运行端口 | 5000 |
 
 在认证中心将应用 **test1** 的回调地址设为上述地址并审核通过后即可联调。
+
+---
+
+## 验证审计日志：权限检查
+
+登录本应用后，首页有链接 **「触发权限检查审计」**（路径 `/demo/check-permission`），会请求认证中心 `POST /api/v1/apps/check-permission`。随后在管理控制台 **审计日志** 中将操作类型选为「权限检查」即可看到记录。
+
+---
+
+## 验证审计日志：令牌刷新
+
+- 管理控制台：登录后本地会保存 `refresh_token`；当 **Access Token 过期**（默认约 30 分钟，见认证中心 `ACCESS_TOKEN_EXPIRE_MINUTES`）后，再操作任意会调 API 的页面，前端会自动调用 `POST /api/v1/auth/refresh`，并产生 **「刷新令牌」** 审计。
+- 也可用手动请求（表单字段 `refresh_token`）：
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/refresh" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "refresh_token=你的refresh_token"
+```
+
+---
+
+## 验证审计日志：安全告警
+
+以下情况会写入 **security_alert**（数量较少属正常）：
+
+1. **异地登录提示**：同一用户本次登录 IP 与上次成功登录 IP 不同（见 `auth.py` 登录成功分支）。
+2. **滥用检测**：短时间内同一 IP 触发多个账号登录锁定、或同一账号多次被锁定（见 `_check_lock_abuse_and_alert`）。
+
+无法稳定复现时，可将操作类型选为「全部操作」在列表中浏览；或筛选「登录锁定」查看 `login_lock` 相关记录。

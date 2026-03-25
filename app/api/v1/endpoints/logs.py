@@ -17,6 +17,31 @@ from app.schemas.audit import AuditLogResponse, AuditLogListResponse
 
 router = APIRouter()
 
+# 与 crud_audit.create_log 的 action 一致；未写入库的类型不要出现在此（避免筛选无数据）
+AUDIT_ACTION_LABELS_CN = {
+    "login": "登录",
+    "logout": "登出",
+    "refresh": "刷新令牌",
+    "user_register": "用户注册",
+    "user_update": "用户更新",
+    "user_disable": "用户禁用",
+    "user_enable": "用户启用",
+    "user_delete": "用户删除",
+    "app_register": "应用注册",
+    "app_delete": "应用删除",
+    "app_approve": "应用审核",
+    "app_disable": "应用禁用",
+    "app_enable": "应用启用",
+    "app_update": "应用更新",
+    "check_permission": "权限检查",
+    "change_password": "修改密码",
+    "login_lock": "登录锁定(IP+用户)",
+    "security_alert": "安全告警",
+}
+
+# 安全告警列表 / 概览统计仅统计实际会写入的告警类 action
+SECURITY_RELATED_ACTIONS = ("security_alert", "login_lock")
+
 # 前端 datetime-local 为本地时间（北京时间），转为 UTC 再与 DB 比较
 BEIJING = timezone(timedelta(hours=8))
 
@@ -180,19 +205,8 @@ async def get_action_distribution(
         .group_by(AuditLog.action)
         .all()
     )
-    action_labels = {
-        "login": "登录", "logout": "登出", "refresh": "刷新令牌",
-        "user_register": "用户注册", "user_update": "用户更新",
-        "user_disable": "用户禁用", "user_enable": "用户启用",
-        "user_delete": "用户删除", "app_register": "应用注册",
-        "app_delete": "应用删除", "app_approve": "应用审核",
-        "app_disable": "应用禁用", "app_enable": "应用启用",
-        "check_permission": "权限检查", "introspect": "令牌内省",
-        "change_password": "修改密码", "account_locked": "账户锁定",
-        "login_lock": "登录锁定(IP+用户)", "security_alert": "安全告警",
-    }
     return [
-        {"action": r.action, "label": action_labels.get(r.action, r.action), "count": r.cnt}
+        {"action": r.action, "label": AUDIT_ACTION_LABELS_CN.get(r.action, r.action), "count": r.cnt}
         for r in rows
     ]
 
@@ -210,7 +224,7 @@ async def get_security_alerts(
     alerts = (
         db.query(AuditLog)
         .filter(
-            AuditLog.action.in_(["security_alert", "account_locked", "login_lock"]),
+            AuditLog.action.in_(list(SECURITY_RELATED_ACTIONS)),
             AuditLog.created_at >= start,
         )
         .order_by(AuditLog.created_at.desc())
@@ -264,13 +278,6 @@ async def export_audit_logs(
         "ID", "操作人ID", "目标用户ID", "应用ID", "操作类型", "操作类型说明",
         "资源", "IP地址", "User-Agent", "成功", "详情", "创建时间"
     ])
-    action_labels = {
-        "login": "登录", "logout": "登出", "refresh": "刷新令牌",
-        "user_register": "用户注册", "user_update": "用户更新", "user_disable": "用户禁用",
-        "user_enable": "用户启用", "user_delete": "用户删除",
-        "app_register": "应用注册", "app_delete": "应用删除", "app_approve": "应用审核",
-        "check_permission": "权限检查", "introspect": "令牌内省"
-    }
     for log in logs:
         writer.writerow([
             log.id,
@@ -278,7 +285,7 @@ async def export_audit_logs(
             log.target_user_id or "",
             log.app_id or "",
             log.action,
-            action_labels.get(log.action, log.action),
+            AUDIT_ACTION_LABELS_CN.get(log.action, log.action),
             log.resource or "",
             log.ip or "",
             (log.user_agent or "")[:80],

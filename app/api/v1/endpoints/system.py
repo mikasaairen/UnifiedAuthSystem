@@ -76,7 +76,7 @@ async def get_security_overview(
     pending = db.query(User).filter(User.is_active == False).count()  # noqa: E712
     week_ago = datetime.utcnow() - timedelta(days=7)
     alerts = db.query(func.count(AuditLog.id)).filter(
-        AuditLog.action.in_(["security_alert", "account_locked", "login_lock"]),
+        AuditLog.action.in_(["security_alert", "login_lock"]),
         AuditLog.created_at >= week_ago,
     ).scalar() or 0
 

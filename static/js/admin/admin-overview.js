@@ -202,7 +202,7 @@ async function loadSecurityOverview() {
                 listEl.innerHTML = '<p class="form-hint">近7天无安全告警</p>';
             } else {
                 listEl.innerHTML = alerts.map(function(a) {
-                    var typeLabel = a.action === 'account_locked' ? '账户锁定' : (a.action === 'login_lock' ? '登录锁定' : '安全告警');
+                    var typeLabel = a.action === 'login_lock' ? '登录锁定' : (a.action === 'security_alert' ? '安全告警' : (a.action || '告警'));
                     var detail = '';
                     try { var d = JSON.parse(a.details || '{}'); detail = d.type === 'ip_change' ? '异地登录 ' + (d.prev_ip||'') + ' → ' + (d.new_ip||'') : (d.reason || ''); } catch(e) {}
                     return '<div class="alert-item"><span class="badge badge-danger">' + typeLabel + '</span> 用户ID:' + (a.actor_user_id||'-') + ' IP:' + (a.ip||'-') + ' ' + detail + ' <small>' + formatBeijingTime(a.created_at) + '</small></div>';
