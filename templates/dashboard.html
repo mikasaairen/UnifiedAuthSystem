@@ -602,6 +602,19 @@
 
     <script src="/static/js/api.js"></script>
     <script src="/static/js/auth.js"></script>
-    <script src="/static/js/admin.js?v=workbench"></script>
+    <!-- 控制台脚本按依赖顺序分片加载 -->
+    <script src="/static/js/admin/admin-state.js?v=2"></script>
+    <script src="/static/js/admin/admin-utils.js?v=2"></script>
+    <script src="/static/js/admin/admin-modal.js?v=2"></script>
+    <script src="/static/js/admin/admin-shell.js?v=2"></script>
+    <script src="/static/js/admin/admin-overview.js?v=2"></script>
+    <script src="/static/js/admin/admin-users.js?v=2"></script>
+    <script src="/static/js/admin/admin-rbac.js?v=2"></script>
+    <script src="/static/js/admin/admin-apps.js?v=2"></script>
+    <script src="/static/js/admin/admin-logs.js?v=2"></script>
+    <script src="/static/js/admin/admin-profile.js?v=2"></script>
+    <script src="/static/js/admin/admin-system.js?v=2"></script>
+    <script src="/static/js/admin/admin-misc.js?v=2"></script>
+    <script src="/static/js/admin/admin-init.js?v=2"></script>
 </body>
 </html>

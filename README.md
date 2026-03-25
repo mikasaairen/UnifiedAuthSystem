@@ -121,7 +121,7 @@ UnifiedAuthSystem/
 │       └── audit.py             # 审计日志 Schema
 ├── static/                       # 静态文件
 │   ├── css/                     # 样式（如 style.css）
-│   └── js/                      # 脚本（api.js、auth.js、admin.js）
+│   └── js/                      # 脚本（api.js、auth.js、admin/*.js 控制台分片）
 ├── templates/                    # HTML 模板
 │   ├── login.html               # 登录/注册页
 │   └── dashboard.html           # 管理控制台
