@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     await loadCurrentUser();
-
+    
     initNavigation();
     initTabsDropdown();
     initUserSearchDebounce();
@@ -1145,7 +1145,7 @@ function showDisableUserModal(userId) {
             <input type="hidden" name="user_id" value="${userId}">
             <div class="form-group">
                 <label>禁用时长</label>
-                <select name="duration" id="disableDurationSelect" onchange="toggleDisableCustom(this)">
+                <select name="duration" id="disableDurationSelect" required onchange="toggleDisableCustom(this)">
                     ${options}
                 </select>
             </div>
@@ -1174,7 +1174,17 @@ function showDisableUserModal(userId) {
     });
     window.toggleDisableCustom = function(sel) {
         var show = sel.value === 'custom';
-        document.getElementById('disableCustomGroup').style.display = show ? '' : 'none';
+        var g = document.getElementById('disableCustomGroup');
+        var inp = document.getElementById('disableCustomMinutes');
+        if (g) g.style.display = show ? '' : 'none';
+        if (inp) {
+            if (show) {
+                inp.setAttribute('required', 'required');
+            } else {
+                inp.removeAttribute('required');
+                inp.value = '';
+            }
+        }
     };
     var sel = document.getElementById('disableDurationSelect');
     if (sel) {
@@ -1225,7 +1235,7 @@ async function editUser(userId) {
                 </div>
                 <div class="form-group">
                     <label>邮箱</label>
-                    <input type="email" name="email" value="${user.email}">
+                    <input type="email" name="email" value="${user.email}" required>
                 </div>
                 <div class="form-group">
                     <label>姓名</label>
@@ -1332,8 +1342,8 @@ function showCreateRolePanel() {
         try {
             await API.post('/rbac/roles', { name: formData.get('name'), description: formData.get('description') });
             hideRoleFormPanel();
-            loadRoles();
-            showMessage('角色创建成功', 'success');
+        loadRoles();
+        showMessage('角色创建成功', 'success');
         } catch (err) {
             showMessage('创建失败: ' + (err.message || ''), 'error');
         }
@@ -1381,8 +1391,8 @@ function showEditRolePanel(roleId) {
             try {
                 await API.put('/rbac/roles/' + roleId, { name: formData.get('name'), description: formData.get('description') });
                 hideRoleFormPanel();
-                loadRoles();
-                showMessage('角色编辑成功', 'success');
+            loadRoles();
+            showMessage('角色编辑成功', 'success');
             } catch (err) {
                 showMessage('保存失败: ' + (err.message || ''), 'error');
             }
@@ -1424,9 +1434,9 @@ function showAssignPermissionsPanel(roleId) {
                     <p>勾选该角色拥有的权限：</p>
                     <div class="assign-perm-toolbar">
                         <label><input type="checkbox" id="assignPermSelectAllInPage" onchange="toggleAssignPermSelectAllInPage(this)"> 全选</label>
-                    </div>
+                            </div>
                     <div class="assign-permissions-list">${checkboxesHtml}</div>
-                </div>
+                    </div>
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary">保存</button>
                     <button type="button" class="btn btn-secondary" onclick="hideRoleFormPanel()">取消</button>
@@ -1470,7 +1480,7 @@ async function batchDeleteRoles() {
     if (!confirm('确定要删除选中的 ' + ids.length + ' 个角色吗？')) return;
     try {
         var res = await API.post('/rbac/roles/batch-delete', { role_ids: ids });
-        loadRoles();
+            loadRoles();
         showMessage(res.message || '批量删除成功', 'success');
     } catch (e) {
         showMessage('操作失败: ' + (e.message || ''), 'error');
@@ -1564,15 +1574,15 @@ function showCreatePermissionPanel() {
         var form = e.target;
         var formData = new FormData(form);
         try {
-            await API.post('/rbac/permissions', {
-                code: formData.get('code'),
-                name: formData.get('name'),
+        await API.post('/rbac/permissions', {
+            code: formData.get('code'),
+            name: formData.get('name'),
                 resource_id: parseInt(formData.get('resource_id'), 10),
-                description: formData.get('description')
-            });
+            description: formData.get('description')
+        });
             hidePermissionFormPanel();
-            loadPermissions();
-            showMessage('权限创建成功', 'success');
+        loadPermissions();
+        showMessage('权限创建成功', 'success');
         } catch (err) {
             showMessage('创建失败: ' + (err.message || ''), 'error');
         }
@@ -1630,14 +1640,14 @@ function showEditPermissionPanel(permissionId) {
             var formData = new FormData(form);
             try {
                 await API.put('/rbac/permissions/' + permissionId, {
-                    code: formData.get('code'),
-                    name: formData.get('name'),
+                code: formData.get('code'),
+                name: formData.get('name'),
                     resource_id: parseInt(formData.get('resource_id'), 10),
-                    description: formData.get('description')
+                description: formData.get('description')
                 });
                 hidePermissionFormPanel();
-                loadPermissions();
-                showMessage('权限编辑成功', 'success');
+            loadPermissions();
+            showMessage('权限编辑成功', 'success');
             } catch (err) {
                 showMessage('保存失败: ' + (err.message || ''), 'error');
             }
@@ -1764,16 +1774,16 @@ function showCreateResourcePanel() {
         var form = e.target;
         var formData = new FormData(form);
         try {
-            await API.post('/rbac/resources', {
+        await API.post('/rbac/resources', {
                 app_id: parseInt(formData.get('app_id'), 10),
-                name: formData.get('name'),
-                resource_type: formData.get('resource_type'),
-                path: formData.get('path'),
+            name: formData.get('name'),
+            resource_type: formData.get('resource_type'),
+            path: formData.get('path'),
                 method: formData.get('method') || null
-            });
+        });
             hideResourceFormPanel();
-            loadResources();
-            showMessage('资源创建成功', 'success');
+        loadResources();
+        showMessage('资源创建成功', 'success');
         } catch (err) {
             showMessage('创建失败: ' + (err.message || ''), 'error');
         }
@@ -1959,18 +1969,27 @@ function showBatchRegisterModal() {
     const html = `
         <p class="form-hint">每行一个应用，填写应用名称、描述（可选）、回调地址（可选）。</p>
         <div id="batchRegisterRows">
-            <div class="batch-app-row form-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-                <input type="text" placeholder="应用名称" name="app_name" required style="flex:1;min-width:0;">
-                <input type="text" placeholder="描述" name="description" style="flex:1;min-width:0;">
-                <input type="url" placeholder="回调地址" name="callback_url" style="flex:1;min-width:0;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeBatchRow(this)">删除</button>
+            <div class="batch-app-row form-row" style="display:flex;gap:12px;margin-bottom:12px;align-items:flex-end;flex-wrap:wrap;">
+                <div class="form-group" style="flex:1;min-width:160px;margin-bottom:0;">
+                    <label>应用名称</label>
+                    <input type="text" name="app_name" required placeholder="必填">
+                </div>
+                <div class="form-group" style="flex:1;min-width:160px;margin-bottom:0;">
+                    <label>描述</label>
+                    <input type="text" name="description" placeholder="可选">
+                </div>
+                <div class="form-group" style="flex:1;min-width:160px;margin-bottom:0;">
+                    <label>回调地址</label>
+                    <input type="url" name="callback_url" placeholder="可选">
+                </div>
+                <button type="button" class="btn btn-sm btn-danger" style="flex-shrink:0;margin-bottom:2px;" onclick="removeBatchRow(this)">删除</button>
             </div>
-        </div>
+            </div>
         <button type="button" class="btn btn-secondary btn-sm" onclick="addBatchRegisterRow()" style="margin-bottom:12px;">+ 添加一行</button>
-        <div class="modal-actions">
+            <div class="modal-actions">
             <button type="button" class="btn btn-primary" id="batchRegisterSubmitBtn">提交注册</button>
-            <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
-        </div>
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+            </div>
     `;
     window.addBatchRegisterRow = function() {
         const parent = document.getElementById('batchRegisterRows');
@@ -2011,7 +2030,7 @@ function showBatchRegisterModal() {
         }
         try {
             const res = await API.post('/apps/batch-register', { apps });
-            closeModal();
+        closeModal();
             const items = res.items || [];
             const text = items.map(i => `app_id: ${i.app_id}\napp_secret: ${i.app_secret}\napp_name: ${i.app_name}\nstatus: ${i.status}\n---`).join('\n');
             const json = JSON.stringify(items, null, 2);
@@ -2023,7 +2042,7 @@ function showBatchRegisterModal() {
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">关闭</button>
                 </div>
             `, null);
-            loadApps();
+        loadApps();
             showMessage('批量注册成功，请下载保存密钥', 'success');
         } catch (e) {
             showMessage('批量注册失败: ' + (e.message || ''), 'error');
@@ -2108,7 +2127,7 @@ function showBatchCallbacksModal() {
         try {
             await API.put('/apps/batch-callbacks', { updates });
             closeModal();
-            loadApps();
+        loadApps();
             showMessage('已更新回调地址', 'success');
         } catch (e) {
             showMessage('更新失败: ' + (e.message || ''), 'error');
@@ -2125,23 +2144,23 @@ function showCreateAppPanel() {
     titleEl.textContent = '注册应用';
     container.innerHTML = `
         <form id="createAppFormInPage">
-            <div class="form-group">
-                <label>应用名称</label>
+                <div class="form-group">
+                    <label>应用名称</label>
                 <input type="text" name="app_name" required>
-            </div>
-            <div class="form-group">
-                <label>描述</label>
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
                 <textarea name="description"></textarea>
-            </div>
-            <div class="form-group">
+                </div>
+                <div class="form-group">
                 <label>回调地址（可选）</label>
                 <input type="url" name="callback_url">
-            </div>
+                </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">注册</button>
                 <button type="button" class="btn btn-secondary" onclick="hideAppFormPanel()">取消</button>
-            </div>
-        </form>
+                </div>
+            </form>
     `;
     listEl.style.display = 'none';
     formEl.style.display = 'block';
@@ -2797,9 +2816,9 @@ function showModal(title, content, onSubmit) {
             </div>
         </div>
     `;
-
+    
     document.body.appendChild(modal);
-
+    
     const form = modal.querySelector('form');
     if (form && onSubmit) {
         form.addEventListener('submit', async (e) => {
@@ -2823,7 +2842,7 @@ function showMessage(message, type = 'info', duration = 3000) {
     msg.className = 'message message-' + type;
     msg.textContent = message;
     document.body.appendChild(msg);
-
+    
     setTimeout(() => msg.classList.add('show'), 10);
     setTimeout(() => {
         msg.classList.remove('show');

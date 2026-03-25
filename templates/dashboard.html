@@ -93,20 +93,15 @@
             <div class="tab-panels-wrap">
             <!-- 工作台页面 -->
             <div id="workbenchPage" class="page-content">
-                <div class="page-header">
-                    <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
-                </div>
                 <div class="workbench-category">已接入应用</div>
                 <div id="workbenchGrid" class="workbench-grid">
-                    <p class="workbench-loading">加载中...</p>
+                    <p class="workbench-loading">加载中...</p>                   
                 </div>
             </div>
 
             <!-- 概览页面：各统计卡片按权限显示，有权限则展示对应数据 -->
             <div id="overviewPage" class="page-content">
-                <div class="page-header">
-                    <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
-                </div>
+
                 <div class="stats-grid" id="overviewStatsGrid">
                     <div class="stat-card" id="statUsers" data-permission="users:manage" style="display:none">
                         <h3>用户总数</h3>
@@ -124,6 +119,7 @@
                         <h3>今日日志</h3>
                         <p class="stat-number" id="todayLogs">-</p>
                     </div>
+
                 </div>
                 <!-- 数据可视化图表区域：固定高度容器避免闪烁 -->
                 <div id="overviewChartsRow" class="overview-charts-row" data-permission="logs:view" style="display:none">
@@ -535,8 +531,8 @@
 
             <!-- 审计日志页面 -->
             <div id="logsPage" class="page-content">
-                <div class="page-header">
-                    <div class="filter-group logs-filter">
+                <div class="filter-group logs-filter"></div>
+                    <div class="page-header">    
                         <label>开始时间</label>
                         <input type="datetime-local" id="logStartTime" placeholder="开始时间">
                         <label>结束时间</label>
@@ -570,11 +566,11 @@
                             <option value="true">成功</option>
                             <option value="false">失败</option>
                         </select>
-                        <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
+                       
                         <button class="btn btn-primary" onclick="queryLogs()">查询</button>
                         <button class="btn btn-secondary" onclick="exportLogs()">导出 CSV</button>
+                        <button type="button" class="btn btn-refresh-icon" title="刷新" aria-label="刷新" onclick="refreshActivePage()">↻</button>
                     </div>
-                </div>
                 <div class="table-container">
                     <table class="data-table logs-table">
                         <thead>
