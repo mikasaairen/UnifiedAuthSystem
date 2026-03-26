@@ -2,7 +2,9 @@
 登录接口 (OAuth2 Password Flow)
 
 登录失败按「用户名 + IP」单独计数与锁定，见 app.core.login_fail_store。
+连续失败达到阈值后需提交图形验证码，见 app.core.captcha_store。
 """
+import base64
 import json
 from datetime import datetime, timedelta
 from typing import Optional
@@ -13,7 +15,14 @@ from sqlalchemy.orm import Session
 from app.core.rate_limit import limiter
 
 from app.core.config import settings
-from app.core.login_fail_store import is_locked, record_fail, clear as login_fail_clear
+from app.core.captcha_image import render_captcha_png
+from app.core import captcha_store
+from app.core.login_fail_store import (
+    is_locked,
+    record_fail,
+    clear as login_fail_clear,
+    get_fail_count,
+)
 from app.api.deps import SSO_COOKIE_NAME
 from app.core.security import (
     create_access_token,
@@ -103,6 +112,34 @@ def _check_lock_abuse_and_alert(db: Session, username: str, ip: Optional[str], r
         )
 
 
+@router.get("/captcha")
+@limiter.limit("30/minute")
+async def get_login_captcha(request: Request):
+    """签发新的图形验证码（一次性）；答案仅存服务端 HMAC，与当前 IP 绑定。"""
+    captcha_store.cleanup_expired()
+    cid = captcha_store.new_captcha_id()
+    png_bytes, answer = render_captcha_png()
+    client_ip = request.client.host if request and request.client else ""
+    captcha_store.store(cid, answer, client_ip)
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    return {
+        "captcha_id": cid,
+        "image_base64": f"data:image/png;base64,{b64}",
+    }
+
+
+@router.get("/captcha-required")
+@limiter.limit("60/minute")
+async def login_captcha_required(
+    username: str = Query(..., min_length=1, max_length=128),
+    request: Request = None,
+):
+    """根据当前 IP 与该用户名的失败次数，判断是否需要验证码（供登录页展示）。"""
+    ip = request.client.host if request and request.client else ""
+    need = get_fail_count(username.strip(), ip) >= settings.LOGIN_CAPTCHA_AFTER_FAILS
+    return {"captcha_required": need}
+
+
 def _redirect_uri_matches_app(redirect_uri: str, app_callback_url: Optional[str]) -> bool:
     """校验 redirect_uri 与应用注册的 callback_url 一致，防止授权码劫持。"""
     if not app_callback_url or not app_callback_url.strip():
@@ -117,6 +154,8 @@ async def login(
     client_id: Optional[str] = Form(None),
     redirect_uri: Optional[str] = Form(None),
     state: Optional[str] = Form(None),
+    captcha_id: Optional[str] = Form(None),
+    captcha_code: Optional[str] = Form(None),
     request: Request = None,
     db: Session = Depends(get_db),
 ):
@@ -144,6 +183,32 @@ async def login(
             details=json.dumps({"reason": "ip_username_locked", "remaining_seconds": remaining_sec}, ensure_ascii=False),
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
+
+    captcha_store.cleanup_expired()
+    threshold = settings.LOGIN_CAPTCHA_AFTER_FAILS
+    fail_count = get_fail_count(username, client_ip or "")
+    if fail_count >= threshold:
+        ok, reason = captcha_store.verify_and_consume(
+            captcha_id or "",
+            captcha_code or "",
+            client_ip or "",
+        )
+        if not ok:
+            if reason == "missing":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "message": "连续登录失败次数过多，请完成验证码",
+                        "captcha_required": True,
+                    },
+                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "验证码错误或已过期，请刷新后重试",
+                    "captcha_required": True,
+                },
+            )
 
     try:
         user = crud_user.authenticate(
@@ -201,9 +266,13 @@ async def login(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=msg,
                 )
+            need_captcha = get_fail_count(username, client_ip or "") >= threshold
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="用户名或密码错误",
+                detail={
+                    "message": "用户名或密码错误",
+                    "captcha_required": need_captcha,
+                },
                 headers={"WWW-Authenticate": "Bearer"},
             )
 

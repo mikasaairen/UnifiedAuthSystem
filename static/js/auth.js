@@ -9,6 +9,31 @@ function getOAuthParams() {
     return { client_id, redirect_uri, state };
 }
 
+async function loadLoginCaptcha() {
+    const data = await API.get('/auth/captcha');
+    const hidden = document.getElementById('captchaId');
+    const img = document.getElementById('captchaImg');
+    const codeInput = document.getElementById('captchaCode');
+    if (hidden) hidden.value = data.captcha_id;
+    if (img) img.src = data.image_base64;
+    if (codeInput) codeInput.value = '';
+}
+
+async function showCaptchaIfNeeded(username) {
+    const row = document.getElementById('captchaRow');
+    if (!row || !username || !String(username).trim()) return;
+    try {
+        const r = await fetch('/api/v1/auth/captcha-required?username=' + encodeURIComponent(String(username).trim()));
+        const data = await r.json();
+        if (data.captcha_required) {
+            row.style.display = 'block';
+            await loadLoginCaptcha();
+        }
+    } catch (e) {
+        /* 忽略探测失败 */
+    }
+}
+
 /**
  * 登录/登出逻辑
  */
@@ -16,6 +41,25 @@ document.addEventListener('DOMContentLoaded', function() {
     const loginForm = document.getElementById('loginForm');
     const registerForm = document.getElementById('registerForm');
     const oauth = getOAuthParams();
+
+    const usernameInput = document.getElementById('username');
+    if (usernameInput) {
+        usernameInput.addEventListener('blur', function() {
+            showCaptchaIfNeeded(usernameInput.value);
+        });
+    }
+    const captchaImg = document.getElementById('captchaImg');
+    const captchaRefresh = document.getElementById('captchaRefresh');
+    if (captchaImg) {
+        captchaImg.addEventListener('click', function() {
+            loadLoginCaptcha().catch(function() {});
+        });
+    }
+    if (captchaRefresh) {
+        captchaRefresh.addEventListener('click', function() {
+            loadLoginCaptcha().catch(function() {});
+        });
+    }
 
     // 登录表单处理
     if (loginForm) {
@@ -35,6 +79,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (oauth.redirect_uri) formData.append('redirect_uri', oauth.redirect_uri);
             if (oauth.state !== undefined) formData.append('state', oauth.state);
 
+            const captchaRow = document.getElementById('captchaRow');
+            if (captchaRow && captchaRow.style.display !== 'none') {
+                const cid = document.getElementById('captchaId');
+                const cc = document.getElementById('captchaCode');
+                formData.append('captcha_id', cid ? cid.value : '');
+                formData.append('captcha_code', cc ? cc.value : '');
+            }
+
             try {
                 const response = await API.postForm('/auth/login', formData);
 
@@ -52,6 +104,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.location.href = '/dashboard';
             } catch (error) {
                 errorDiv.textContent = error.message || '登录失败，请检查用户名和密码';
+                if (error.captcha_required) {
+                    const row = document.getElementById('captchaRow');
+                    if (row) row.style.display = 'block';
+                    loadLoginCaptcha().catch(function() {});
+                }
             }
         });
     }

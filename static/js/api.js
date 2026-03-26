@@ -130,15 +130,27 @@ class API {
 
         if (!response.ok) {
             let msg = '请求失败';
+            let captcha_required = false;
             if (data.detail != null) {
-                msg = Array.isArray(data.detail) ? data.detail.map(d => d.msg || JSON.stringify(d)).join('；') : String(data.detail);
+                if (typeof data.detail === 'object' && !Array.isArray(data.detail) && data.detail.message != null) {
+                    msg = String(data.detail.message);
+                    captcha_required = !!data.detail.captcha_required;
+                } else if (Array.isArray(data.detail)) {
+                    msg = data.detail.map(d => d.msg || JSON.stringify(d)).join('；');
+                } else {
+                    msg = String(data.detail);
+                }
             }
             if (response.status === 401) {
                 const err = new Error(msg || '未授权');
                 err.status = 401;
+                err.captcha_required = captcha_required;
                 throw err;
             }
-            throw new Error(msg);
+            const err = new Error(msg);
+            err.captcha_required = captcha_required;
+            err.status = response.status;
+            throw err;
         }
         return data;
     }

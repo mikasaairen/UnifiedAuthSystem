@@ -21,6 +21,15 @@
                     <label for="password">密码</label>
                     <input type="password" id="password" name="password" required>
                 </div>
+                <div id="captchaRow" class="form-group" style="display: none;">
+                    <label for="captchaCode">验证码</label>
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <img id="captchaImg" src="" alt="验证码" style="height: 44px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer;" title="点击刷新">
+                        <input type="hidden" id="captchaId" value="">
+                        <input type="text" id="captchaCode" name="captcha_code" autocomplete="off" placeholder="图中字符（不区分大小写）" style="max-width: 160px;">
+                        <button type="button" id="captchaRefresh" tabindex="-1">换一张</button>
+                    </div>
+                </div>
                 <button type="submit">登录</button>
                 <div id="error" class="error"></div>
             </form>
@@ -58,7 +67,7 @@
         </div>
     </div>
     
-    <script src="/static/js/api.js?v=2"></script>
+    <script src="/static/js/api.js?v=3"></script>
     <script src="/static/js/auth.js"></script>
     <script>
         function showRegister() {

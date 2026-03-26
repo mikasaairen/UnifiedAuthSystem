@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     # 账户风控策略（登录失败 N 次后自动锁定）
     LOGIN_MAX_FAILS: int = 15
     LOGIN_LOCK_MINUTES: int = 15
+    # 同一 (用户名+IP) 登录失败达到此次数后，后续登录必须提交图形验证码
+    LOGIN_CAPTCHA_AFTER_FAILS: int = 3
+    # 验证码有效期（秒），过期需重新获取
+    CAPTCHA_TTL_SECONDS: int = 180
     
     # 是否允许新用户注册（关闭后登录页不显示注册入口，注册接口返回 403）
     ALLOW_REGISTRATION: bool = True
