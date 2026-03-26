@@ -144,7 +144,39 @@ def _redirect_uri_matches_app(redirect_uri: str, app_callback_url: Optional[str]
     """校验 redirect_uri 与应用注册的 callback_url 一致，防止授权码劫持。"""
     if not app_callback_url or not app_callback_url.strip():
         return False
-    return redirect_uri.strip() == app_callback_url.strip()
+    req = (redirect_uri or "").strip()
+    reg = app_callback_url.strip()
+    if req == reg:
+        return True
+
+    # 兼容本机开发场景：localhost 与 127.0.0.1 视为同一主机（要求端口、路径、query 完全一致）
+    # 这样应用可在 localhost/127 两种地址访问而不触发回调地址不一致
+    try:
+        from urllib.parse import urlparse
+
+        p_req = urlparse(req)
+        p_reg = urlparse(reg)
+
+        req_host = (p_req.hostname or "").lower()
+        reg_host = (p_reg.hostname or "").lower()
+        loopback_hosts = {"localhost", "127.0.0.1"}
+
+        def _norm_port(parsed):
+            if parsed.port is not None:
+                return parsed.port
+            if parsed.scheme == "https":
+                return 443
+            return 80
+
+        same_loopback_host = req_host in loopback_hosts and reg_host in loopback_hosts
+        same_scheme = (p_req.scheme or "http") == (p_reg.scheme or "http")
+        same_port = _norm_port(p_req) == _norm_port(p_reg)
+        same_path = (p_req.path or "/") == (p_reg.path or "/")
+        same_query = (p_req.query or "") == (p_reg.query or "")
+        same_fragment = (p_req.fragment or "") == (p_reg.fragment or "")
+        return same_loopback_host and same_scheme and same_port and same_path and same_query and same_fragment
+    except Exception:
+        return False
 
 
 @router.post("/login")
